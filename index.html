@@ -7,85 +7,12 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <!-- HUD -->
-        <div id="hud" class="hud hidden">
-            <div class="hud-item">
-                <span class="label">Level</span>
-                <span id="level-display" class="value">1</span>
-            </div>
-            <div class="hud-item">
-                <span class="label">Bits</span>
-                <span id="gold-display" class="value">0</span>
-            </div>
-            <div class="hud-item">
-                <span class="label">Score</span>
-                <span id="score-display" class="value">0</span>
-            </div>
-            <div class="hud-item">
-                <span class="label">Lives</span>
-                <span id="lives-display" class="value">♥♥♥</span>
-            </div>
-        </div>
-
-        <!-- Combo Meter -->
-        <div id="combo-container" class="combo-container hidden">
-            <div class="combo-text">x<span id="combo-multiplier">1.0</span></div>
-            <div class="combo-bar-bg">
-                <div id="combo-bar-fill" class="combo-bar-fill"></div>
-            </div>
-        </div>
-
-        <h1>Tower of Hanoi <span class="subtitle">Roguelite Edition</span></h1>
-        
-        <!-- Start Screen -->
-        <div id="start-screen">
-            <h2>System Ready</h2>
-            <p class="flavor-text">Initiate protocol. Solve towers. Collect bits. Upgrade.</p>
-            <button id="start-btn" class="primary-btn">Start Run</button>
-        </div>
-
-        <!-- Shop Screen -->
-        <div id="shop-screen" class="shop-screen hidden">
-            <h2>Upgrade Module</h2>
-            <div class="shop-stats">
-                Current Bits: <span id="shop-gold">0</span>
-            </div>
-            <div id="shop-items" class="shop-grid">
-                <!-- Items injected by JS -->
-            </div>
-            <button id="next-level-btn" class="primary-btn">Next Level</button>
-        </div>
-
-        <!-- Game Controls (Initially Hidden) -->
-        <div id="game-controls" class="controls hidden">
-            <button id="menu-btn">Abort Run</button>
-            <div class="stats">Moves: <span id="move-count">0</span></div>
-        </div>
-
-
-        <div id="game-board" class="game-board hidden">
-            <div class="tower" data-tower="0">
-                <div class="pole"></div>
-                <div class="base"></div>
-            </div>
-            <div class="tower" data-tower="1">
-                <div class="pole"></div>
-                <div class="base"></div>
-            </div>
-            <div class="tower" data-tower="2">
-                <div class="pole"></div>
-                <div class="base"></div>
-            </div>
-        </div>
-        
-        <div id="message" class="hidden">
-            <h2>Level Complete!</h2>
-            <p>Moves: <span id="final-moves">0</span></p>
-            <p>Bits Earned: <span id="earned-gold">0</span></p>
-            <button id="to-shop-btn" class="primary-btn">Enter Shop</button>
-        </div>
+    <!-- Kaplay Canvas will be injected here automatically or we can specify a container -->
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
     </div>
+
+    <script src="https://unpkg.com/kaplay@3001.0.12/dist/kaplay.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

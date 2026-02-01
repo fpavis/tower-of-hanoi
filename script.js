@@ -1,426 +1,921 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // DOM Elements
-    const towers = document.querySelectorAll('.tower');
-    const moveCountSpan = document.getElementById('move-count');
+// Initialize Kaplay
+kaplay({
+    global: true, // Enable global functions (add, scene, go, etc.)
+    background: [15, 18, 21], // Match CSS --bg-color
+    width: 900,
+    height: 500,
+    canvas: document.getElementById("game-canvas"),
+    scale: 1,
+    debug: false, // Turn off debug for cleaner look
+});
+
+// Load Custom Font
+// loadFont("fredoka", "https://fonts.gstatic.com/s/fredokaone/v13/k3kUo8kEI-tA1RRcTZGmGmHHEzy05GI.ttf");
+
+// --- Audio System ---
+let audioCtx = null;
+
+const Sound = {
+    init: () => {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    },
+    playTone: (freq, type, duration, vol = 0.1) => {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    },
+    select: () => Sound.playTone(440, 'sine', 0.1),
+    deselect: () => Sound.playTone(330, 'sine', 0.1),
+    move: () => Sound.playTone(600, 'sine', 0.15),
+    invalid: () => Sound.playTone(150, 'sawtooth', 0.3, 0.2),
+    click: () => Sound.playTone(800, 'sine', 0.05, 0.05), // UI Click
+    win: () => {
+        setTimeout(() => Sound.playTone(523.25, 'sine', 0.1), 0);
+        setTimeout(() => Sound.playTone(659.25, 'sine', 0.1), 100);
+        setTimeout(() => Sound.playTone(783.99, 'sine', 0.2), 200);
+    },
+    gameOver: () => {
+        Sound.playTone(100, 'sawtooth', 0.5, 0.3);
+    }
+};
+
+// --- Game State & Data ---
+
+const state = {
+    level: 1,
+    gold: 0,
+    score: 0,
+    lives: 3,
+    maxLives: 3,
+    moves: 0,
+    isPlaying: false,
+    disks: 3,
+    targetTowerIndex: 2,
+    prevTargetTowerIndex: 2,
+    moveGoldMin: 1,
+    moveGoldMax: 2,
+    levelBonusMin: 30,
+    levelBonusMax: 70
+};
+
+const modifiers = {
+    comboDecayRate: 0.3,
+    goldPerMove: 1,
+    goldMultiplier: 1,
+    scoreMultiplier: 1,
+    comboGain: 30
+};
+
+const combo = {
+    value: 0,
+    multiplier: 1.0,
+    active: false
+};
+
+// Colors - Vibrant Kaplay Style
+const COLORS = {
+    bg: '#1a1a1a', // Darker bg for contrast
+    tower: '#4a5568',
+    base: '#2c3e50',
+    accent: '#60d394', // Kaplay Green
+    accentHighlight: '#aaf0d1',
+    gold: '#ffd700',
+    danger: '#ff6b6b', // Vibrant Red
+    text: '#ffffff',
+    outline: '#000000',
+    disks: [
+        '#ff8da1', // Pink
+        '#f6ad55', // Orange
+        '#f6e05e', // Yellow
+        '#68d391', // Green
+        '#4fd1c5', // Teal
+        '#63b3ed', // Blue
+        '#7f9cf5', // Indigo
+        '#b794f4'  // Purple
+    ]
+};
+
+// --- UI Components ---
+function addButton(txt, p, f, width = 200, height = 60, opts = {}) {
+    const isFixed = opts.fixed || false;
+    const zIndex = opts.z || 0;
+
+    // Shadow (for 3D effect)
+    add([
+        rect(width, height, { radius: 16 }),
+        pos(p.add(vec2(4, 4))),
+        anchor("center"),
+        color(0, 0, 0),
+        opacity(0.3),
+        ...(isFixed ? [fixed()] : []),
+        z(zIndex > 0 ? zIndex - 1 : 0),
+        "ui-shadow"
+    ]);
+
+    const btn = add([
+        rect(width, height, { radius: 16 }),
+        pos(p),
+        area(),
+        scale(1),
+        anchor("center"),
+        color(COLORS.accent),
+        outline(4, COLORS.outline), // Thick outline
+        ...(isFixed ? [fixed()] : []),
+        z(zIndex),
+        "ui-button"
+    ]);
     
-    // Screens & Modals
-    const startScreen = document.getElementById('start-screen');
-    const hud = document.getElementById('hud');
-    const gameControls = document.getElementById('game-controls');
-    const gameBoard = document.getElementById('game-board');
-    const messageModal = document.getElementById('message');
-    const shopScreen = document.getElementById('shop-screen');
-    const comboContainer = document.getElementById('combo-container');
+    btn.add([
+        text(txt, { size: 28, align: "center" }),
+        anchor("center"),
+        color(0, 0, 0),
+    ]);
 
-    // Buttons
-    const startBtn = document.getElementById('start-btn');
-    const menuBtn = document.getElementById('menu-btn'); // "Abort Run"
-    const toShopBtn = document.getElementById('to-shop-btn');
-    const nextLevelBtn = document.getElementById('next-level-btn');
+    btn.onClick(() => {
+        Sound.click();
+        f();
+    });
 
-    // Displays
-    const levelDisplay = document.getElementById('level-display');
-    const goldDisplay = document.getElementById('gold-display');
-    const scoreDisplay = document.getElementById('score-display');
-    const livesDisplay = document.getElementById('lives-display');
-    const comboMultiplierDisplay = document.getElementById('combo-multiplier');
-    const comboBarFill = document.getElementById('combo-bar-fill');
-    const finalMovesSpan = document.getElementById('final-moves');
-    const earnedGoldSpan = document.getElementById('earned-gold');
-    const shopGoldDisplay = document.getElementById('shop-gold');
-    const shopItemsContainer = document.getElementById('shop-items');
+    btn.onHoverUpdate(() => {
+        btn.scale = vec2(1.05);
+        btn.color = Color.fromHex(COLORS.accentHighlight);
+        setCursor("pointer");
+    });
 
-    // Game State
-    const state = {
-        level: 1,
-        gold: 0,
-        score: 0,
-        lives: 3,
-        maxLives: 3,
-        moves: 0,
-        isPlaying: false,
-        disks: 3,
-        targetTowerIndex: 2,
-        prevTargetTowerIndex: 2,
-        moveGoldMin: 1,
-        moveGoldMax: 2,
-        levelBonusMin: 30,
-        levelBonusMax: 70
-    };
+    btn.onHoverEnd(() => {
+        btn.scale = vec2(1);
+        btn.color = Color.fromHex(COLORS.accent);
+        setCursor("default");
+    });
 
-    // Upgrades / Modifiers
-    const modifiers = {
-        comboDecayRate: 0.3, // Percent per frame
-        goldPerMove: 1,
-        goldMultiplier: 1,
-        scoreMultiplier: 1,
-        comboGain: 30 // Percent added per move
-    };
+    return btn;
+}
 
-    // Combo System
-    const combo = {
-        value: 0, // 0 to 100
-        multiplier: 1.0,
-        active: false,
-        lastFrameTime: 0
-    };
+function addPanel(width, height, p, opts = {}) {
+    const isFixed = opts.fixed || false;
+    const zIndex = opts.z || 0;
 
-    // Selection State
-    let selectedDisk = null;
-    let selectedTower = null;
+    // Panel Shadow
+    add([
+        rect(width, height, { radius: 24 }),
+        pos(p.add(vec2(8, 8))),
+        anchor("center"),
+        color(0, 0, 0),
+        opacity(0.3),
+        ...(isFixed ? [fixed()] : []),
+        z(zIndex > 0 ? zIndex - 1 : 0),
+    ]);
 
-    // --- Core Game Loop ---
+    // Main Panel
+    return add([
+        rect(width, height, { radius: 24 }),
+        pos(p),
+        anchor("center"),
+        color(255, 255, 255),
+        outline(6, COLORS.outline),
+        ...(isFixed ? [fixed()] : []),
+        z(zIndex),
+    ]);
+}
 
-    function initRun() {
-        state.level = 1;
-        state.gold = 0;
-        state.score = 0;
-        state.lives = 3;
-        state.maxLives = 3;
-        state.prevTargetTowerIndex = 2;
+// --- Scene Management ---
+
+function fadeTransition() {
+    const f = add([
+        rect(width(), height()),
+        color(0, 0, 0),
+        opacity(1),
+        fixed(),
+        z(1000),
+        "transition"
+    ]);
+    tween(1, 0, 0.5, (val) => f.opacity = val, easings.easeOutQuad)
+        .onEnd(() => destroy(f));
+}
+
+// Menu Scene
+scene("menu", () => {
+    fadeTransition();
+
+    // Title Shadow
+    add([
+        text("Tower of Hanoi", { size: 64, align: "center" }),
+        pos(center().x + 4, 154),
+        anchor("center"),
+        color(0, 0, 0),
+        opacity(0.5),
+    ]);
+
+    add([
+        text("Tower of Hanoi", { size: 64, align: "center" }),
+        pos(center().x, 150),
+        anchor("center"),
+        color(COLORS.accent),
+    ]);
+    
+    add([
+        text("Roguelite Edition", { size: 32, letterSpacing: 4 }),
+        pos(center().x, 210),
+        anchor("center"),
+        color(COLORS.text),
+    ]);
+
+    addButton("Start Run", vec2(center().x, 350), () => {
+        initRun();
+    });
+
+    // Bean Mascot
+    const bean = add([
+        rect(60, 100, { radius: 30 }),
+        pos(width() - 100, height() - 50),
+        anchor("bot"),
+        color(COLORS.accent),
+        outline(4, COLORS.outline),
+        rotate(0)
+    ]);
+    
+    // Eyes
+    bean.add([
+        circle(8),
+        pos(-15, -60),
+        color(BLACK)
+    ]);
+    bean.add([
+        circle(8),
+        pos(15, -60),
+        color(BLACK)
+    ]);
+    
+    // Mouth
+    bean.add([
+        rect(20, 5, { radius: 2 }),
+        pos(0, -40),
+        anchor("center"),
+        color(BLACK)
+    ]);
+    
+    // Animation
+    bean.onUpdate(() => {
+        bean.angle = Math.sin(time() * 4) * 5;
+        bean.scale = vec2(1, 1 + Math.sin(time() * 8) * 0.05);
+    });
+});
+
+// Shop Scene
+scene("shop", () => {
+    fadeTransition();
+
+    add([
+        text("Upgrade Module", { size: 48 }),
+        pos(center().x, 40),
+        anchor("center"),
+        color(COLORS.accent),
+    ]);
+
+    add([
+        text(`Bits: ${state.gold}`, { size: 32 }),
+        pos(center().x, 90),
+        anchor("center"),
+        color(COLORS.gold),
+    ]);
+
+    let yPos = 140;
+    upgrades.forEach(item => {
+        const itemBtn = add([
+            rect(500, 50, { radius: 12 }),
+            pos(center().x, yPos),
+            anchor("center"),
+            area(),
+            color(state.gold >= item.cost ? rgb(255, 255, 255) : rgb(200, 200, 200)),
+            outline(3, COLORS.outline),
+        ]);
+
+        itemBtn.add([
+            text(`${item.name} (${item.cost})`, { size: 20 }),
+            pos(-230, 0),
+            anchor("left"),
+            color(0, 0, 0),
+        ]);
         
-        // Reset Modifiers
-        modifiers.comboDecayRate = 0.3;
-        modifiers.goldPerMove = 1;
-        modifiers.goldMultiplier = 1;
-        modifiers.scoreMultiplier = 1;
+        itemBtn.add([
+            text(item.desc, { size: 16 }),
+            pos(230, 0),
+            anchor("right"),
+            color(rgb(80, 80, 80)),
+        ]);
 
-        updateHUD();
-        startLevel();
-    }
-
-    function startLevel() {
-        state.moves = 0;
-        state.isPlaying = true;
+        itemBtn.onClick(() => {
+            if (state.gold >= item.cost) {
+                Sound.click();
+                state.gold -= item.cost;
+                item.action();
+                go("shop"); // Refresh shop
+            } else {
+                Sound.invalid();
+                shake(2);
+            }
+        });
         
-        // Calculate disks based on level (slow progression)
-        // Level 1-2: 3 disks
-        // Level 3-4: 4 disks
-        // Level 5-6: 5 disks...
-        state.disks = 3 + Math.floor((state.level - 1) / 2);
-        if (state.disks > 8) state.disks = 8; // Cap at 8 for CSS reasons
-
-        // Choose destination tower for this level (must be 1 or 2 and not repeat last)
-        const possibleTargets = [1, 2].filter(i => i !== state.prevTargetTowerIndex);
-        const nextTarget = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
-        state.targetTowerIndex = nextTarget;
-        state.prevTargetTowerIndex = nextTarget;
-
-        // Randomize coin ranges for this level
-        const baseMin = 1 + Math.floor((state.level - 1) / 3);
-        const baseMax = baseMin + 2 + Math.floor(Math.random() * 3); // Wider range later
-        state.moveGoldMin = baseMin;
-        state.moveGoldMax = baseMax;
-
-        const bonusBase = 20 + state.level * 10;
-        state.levelBonusMin = bonusBase;
-        state.levelBonusMax = bonusBase + 40;
-
-        // UI Updates
-        startScreen.classList.add('hidden');
-        shopScreen.classList.add('hidden');
-        messageModal.classList.add('hidden');
+        // Hover effect for shop items
+        itemBtn.onHoverUpdate(() => {
+            if (state.gold >= item.cost) {
+                itemBtn.scale = vec2(1.02);
+                setCursor("pointer");
+            }
+        });
         
-        hud.classList.remove('hidden');
-        gameControls.classList.remove('hidden');
-        gameBoard.classList.remove('hidden');
-        comboContainer.classList.remove('hidden');
-
-        moveCountSpan.textContent = 0;
-        updateHUD();
-
-        // Reset Board
-        setupBoard();
-
-        // Reset Combo
-        combo.value = 0;
-        combo.multiplier = 1.0;
-        combo.active = true;
-        combo.lastFrameTime = 0;
-        requestAnimationFrame(gameLoop);
-    }
-
-    function setupBoard() {
-        towers.forEach(tower => {
-            const disks = tower.querySelectorAll('.disk');
-            disks.forEach(disk => disk.remove());
-            tower.classList.remove('selected-tower');
-            tower.classList.remove('target-tower');
+        itemBtn.onHoverEnd(() => {
+            itemBtn.scale = vec2(1);
+            setCursor("default");
         });
 
-        const startTower = towers[0];
-        for (let i = state.disks; i >= 1; i--) {
-            const disk = document.createElement('div');
-            disk.classList.add('disk');
-            disk.dataset.size = i;
-            startTower.appendChild(disk);
-        }
+        yPos += 60;
+    });
 
-        // Mark target tower visually
-        towers[state.targetTowerIndex].classList.add('target-tower');
+    addButton("Next Level", vec2(center().x, 450), () => {
+        state.level++;
+        startLevel();
+    });
+});
+
+// Game Over Scene
+scene("gameover", () => {
+    fadeTransition();
+
+    addPanel(500, 300, center());
+
+    add([
+        text("Game Over", { size: 64 }),
+        pos(center().x, 180),
+        anchor("center"),
+        color(COLORS.danger),
+    ]);
+
+    add([
+        text(`Score: ${state.score}\nLevel: ${state.level}`, { size: 32, align: "center" }),
+        pos(center().x, 280),
+        anchor("center"),
+        color(0, 0, 0),
+    ]);
+
+    addButton("Main Menu", vec2(center().x, 380), () => {
+        go("menu");
+    });
+});
+
+// Main Game Scene
+scene("game", () => {
+    fadeTransition();
+
+    console.log("Entering Game Scene");
+    
+    // --- HUD ---
+    const hudLayer = add([
+        fixed(),
+        z(100)
+    ]);
+
+    // Top Left Stats Panel
+    hudLayer.add([
+        rect(220, 130, { radius: 12 }),
+        pos(10, 10),
+        color(0, 0, 0),
+        opacity(0.5),
+        outline(2, COLORS.outline),
+    ]);
+
+    // Level
+    const levelLabel = hudLayer.add([
+        text(`Level: ${state.level}`, { size: 24 }),
+        pos(25, 25),
+        color(255, 255, 255),
+        "hud-level"
+    ]);
+
+    // Gold
+    const goldLabel = hudLayer.add([
+        text(`Bits: ${state.gold}`, { size: 24 }),
+        pos(25, 55),
+        color(COLORS.gold),
+        "hud-gold"
+    ]);
+
+    // Score
+    const scoreLabel = hudLayer.add([
+        text(`Score: ${state.score}`, { size: 24 }),
+        pos(25, 85),
+        color(255, 255, 255),
+        "hud-score"
+    ]);
+
+    // Lives
+    const livesLabel = hudLayer.add([
+        text(`Lives: ${state.lives}`, { size: 24 }),
+        pos(25, 115),
+        color(COLORS.danger),
+        "hud-lives"
+    ]);
+
+    // Combo
+    const comboLabel = hudLayer.add([
+        text(`x${combo.multiplier.toFixed(1)}`, { size: 48 }),
+        pos(width() - 30, 50),
+        anchor("topright"),
+        color(COLORS.accent),
+        outline(4, COLORS.outline),
+        "hud-combo"
+    ]);
+
+    // Abort Button (Small)
+    const abortBtn = hudLayer.add([
+        rect(100, 40, { radius: 8 }),
+        pos(width() - 70, height() - 40),
+        anchor("center"),
+        area(),
+        color(COLORS.danger),
+        outline(2, COLORS.outline),
+    ]);
+    
+    abortBtn.add([
+        text("Abort", { size: 20 }),
+        anchor("center"),
+        color(255, 255, 255)
+    ]);
+    
+    abortBtn.onClick(() => {
+        if (state.isPlaying) {
+             Sound.click();
+             go("menu");
+        }
+    });
+    
+    abortBtn.onHoverUpdate(() => {
+        abortBtn.scale = vec2(1.1);
+        setCursor("pointer");
+    });
+    abortBtn.onHoverEnd(() => {
+        abortBtn.scale = vec2(1);
+        setCursor("default");
+    });
+
+    // Helper to update HUD
+    function updateGameHUD() {
+        if (levelLabel) levelLabel.text = `Level: ${state.level}`;
+        if (goldLabel) goldLabel.text = `Bits: ${state.gold}`;
+        if (scoreLabel) scoreLabel.text = `Score: ${state.score}`;
+        if (livesLabel) livesLabel.text = `Lives: ${state.lives}`;
+        if (comboLabel) {
+            comboLabel.text = `x${combo.multiplier.toFixed(1)}`;
+            comboLabel.color = combo.value > 80 ? Color.fromHex(COLORS.accent) : (combo.value > 50 ? Color.fromHex(COLORS.gold) : Color.fromHex(COLORS.danger));
+            // Pulse combo text if high
+            if (combo.value > 80) {
+                comboLabel.scale = vec2(1 + Math.sin(time() * 10) * 0.1);
+            } else {
+                comboLabel.scale = vec2(1);
+            }
+        }
     }
 
-    // --- Game Logic ---
+    // Update HUD loop
+    hudLayer.onUpdate(updateGameHUD);
 
-    function handleTowerClick(tower) {
+    // Tower setup
+    const towerWidth = 16; // Thicker poles
+    const towerHeight = 250;
+    const baseWidth = 240;
+    const baseHeight = 24;
+    const towerGap = 280;
+    const startX = width() / 2 - towerGap;
+    const groundY = height() - 50;
+
+    const towers = [];
+    
+    // Selection state
+    let selectedDisk = null;
+    let selectedTowerIdx = null;
+
+    // Create Towers
+    for (let i = 0; i < 3; i++) {
+        const xPos = startX + (i * towerGap);
+        
+        // Base
+        add([
+            rect(baseWidth, baseHeight, { radius: 8 }),
+            pos(xPos, groundY),
+            anchor("bot"),
+            color(Color.fromHex(COLORS.base)),
+            outline(2, COLORS.outline),
+            area(),
+            "base"
+        ]);
+
+        // Pole
+        add([
+            rect(towerWidth, towerHeight, { radius: 8 }),
+            pos(xPos, groundY),
+            anchor("bot"),
+            color(Color.fromHex(COLORS.tower)),
+            outline(2, COLORS.outline),
+            area(),
+            "pole",
+            { towerId: i }
+        ]);
+        
+        // Hitbox for clicking the tower area
+        const clickArea = add([
+            rect(baseWidth, towerHeight + 40),
+            pos(xPos, groundY),
+            anchor("bot"),
+            opacity(0),
+            area(),
+            "towerClick",
+            { towerId: i }
+        ]);
+
+        // Target marker (visual)
+        if (i === state.targetTowerIndex) {
+            const glow = add([
+                rect(baseWidth + 30, towerHeight + 50, { radius: 16 }),
+                pos(xPos, groundY + 10),
+                anchor("bot"),
+                color(Color.fromHex(COLORS.accent)),
+                opacity(0.1),
+                z(-1)
+            ]);
+            
+            // Pulse effect
+            glow.onUpdate(() => {
+                glow.opacity = wave(0.05, 0.2, time() * 3);
+            });
+        }
+
+        towers.push({
+            disks: [], // Array of disk objects
+            id: i
+        });
+
+        // Click handler
+        clickArea.onClick(() => {
+            handleTowerClick(i);
+        });
+        
+        clickArea.onHoverUpdate(() => {
+            setCursor("pointer");
+        });
+        clickArea.onHoverEnd(() => {
+            setCursor("default");
+        });
+    }
+
+    // Spawn Disks
+    const startTower = towers[0];
+    const diskHeight = 30; // Thicker disks
+    const maxDiskWidth = 200;
+    const minDiskWidth = 60;
+    
+    const towerPolePos = { x: startX, y: groundY }; // Tower 0 position
+
+    for (let i = state.disks; i >= 1; i--) {
+        const sizeRatio = (i - 1) / 7; // 0 to 1
+        // Clamp i to max 8 for colors
+        const colorIdx = Math.min(i - 1, 7);
+        const diskWidth = minDiskWidth + (sizeRatio * (maxDiskWidth - minDiskWidth));
+        
+        // Let's stack them properly
+        const stackIndex = startTower.disks.length;
+        const diskY = groundY - baseHeight - (stackIndex * (diskHeight + 3));
+        
+        const disk = add([
+            rect(diskWidth, diskHeight, { radius: 10 }),
+            pos(towerPolePos.x, diskY),
+            anchor("bot"),
+            color(Color.fromHex(COLORS.disks[colorIdx])),
+            outline(3, COLORS.outline), // Bold outlines
+            area(),
+            z(10), // Ensure disks are above everything
+            "disk",
+            { 
+                size: i,
+                towerId: 0 
+            }
+        ]);
+
+        startTower.disks.push(disk);
+    }
+
+    // --- Game Logic Helpers ---
+
+    function handleTowerClick(towerIdx) {
         if (!state.isPlaying) return;
 
+        const tower = towers[towerIdx];
+
         if (!selectedDisk) {
-            const topDisk = getTopDisk(tower);
-            if (topDisk) {
-                selectDisk(tower, topDisk);
+            // Select top disk
+            if (tower.disks.length > 0) {
+                const topDisk = tower.disks[tower.disks.length - 1];
+                selectDisk(topDisk, towerIdx);
             }
         } else {
-            if (tower === selectedTower) {
+            // Move or Deselect
+            if (towerIdx === selectedTowerIdx) {
                 deselectDisk();
             } else {
-                attemptMove(tower);
+                attemptMove(towerIdx);
             }
         }
     }
 
-    function getTopDisk(tower) {
-        const disks = tower.querySelectorAll('.disk');
-        if (disks.length === 0) return null;
-        return disks[disks.length - 1];
-    }
-
-    function selectDisk(tower, disk) {
+    function selectDisk(disk, towerIdx) {
         selectedDisk = disk;
-        selectedTower = tower;
-        disk.classList.add('selected');
-        tower.classList.add('selected-tower');
+        selectedTowerIdx = towerIdx;
+        Sound.select();
+        
+        // Visual feedback
+        disk.scale = vec2(1.1);
+        
+        // Float animation
+        tween(disk.pos.y, disk.pos.y - 40, 0.2, (val) => disk.pos.y = val, easings.easeOutQuad);
     }
 
     function deselectDisk() {
-        if (selectedDisk) {
-            selectedDisk.classList.remove('selected');
-            selectedDisk = null;
-        }
-        if (selectedTower) {
-            selectedTower.classList.remove('selected-tower');
-            selectedTower = null;
-        }
+        if (!selectedDisk) return;
+        Sound.deselect();
+        
+        const disk = selectedDisk; // Capture reference for tween
+        const tower = towers[selectedTowerIdx];
+        const targetY = groundY - baseHeight - ((tower.disks.length - 1) * (diskHeight + 3));
+        
+        // Reset visuals
+        disk.scale = vec2(1);
+        
+        // Return to position
+        tween(disk.pos.y, targetY, 0.2, (val) => disk.pos.y = val, easings.easeOutQuad);
+        
+        selectedDisk = null;
+        selectedTowerIdx = null;
     }
 
-    function attemptMove(targetTower) {
-        const topDiskTarget = getTopDisk(targetTower);
-        const selectedSize = parseInt(selectedDisk.dataset.size);
-        const targetSize = topDiskTarget ? parseInt(topDiskTarget.dataset.size) : Infinity;
+    function attemptMove(targetTowerIdx) {
+        const targetTower = towers[targetTowerIdx];
+        const topTargetDisk = targetTower.disks.length > 0 ? targetTower.disks[targetTower.disks.length - 1] : null;
+        
+        const selectedSize = selectedDisk.size;
+        const targetSize = topTargetDisk ? topTargetDisk.size : Infinity;
 
         if (selectedSize < targetSize) {
-            executeMove(targetTower);
+            executeMove(targetTowerIdx);
         } else {
-            handleInvalidMove(targetTower);
+            handleInvalidMove(targetTowerIdx);
         }
     }
 
-    function executeMove(targetTower) {
-        targetTower.appendChild(selectedDisk);
-        state.moves++;
-        moveCountSpan.textContent = state.moves;
+    function executeMove(targetTowerIdx) {
+        const sourceTower = towers[selectedTowerIdx];
+        const targetTower = towers[targetTowerIdx];
         
-        // Rewards (randomized per move within this level's range)
+        // Capture disk reference for animation
+        const disk = selectedDisk;
+        
+        // Remove from source
+        sourceTower.disks.pop();
+        
+        // Add to target
+        targetTower.disks.push(disk);
+        disk.towerId = targetTowerIdx;
+        
+        Sound.move();
+
+        // Animate move
+        // Calculate target position
+        // x is tower x
+        const towerX = startX + (targetTowerIdx * towerGap);
+        const targetY = groundY - baseHeight - ((targetTower.disks.length - 1) * (diskHeight + 3));
+        
+        const moveTime = 0.3;
+        
+        // Reset selection visuals first
+        disk.scale = vec2(1);
+
+        // Move Animation
+        tween(disk.pos.x, towerX, moveTime, (val) => disk.pos.x = val, easings.easeInOutQuad);
+        tween(disk.pos.y, targetY, moveTime, (val) => disk.pos.y = val, easings.easeOutBack);
+        
+        // Update State
+        state.moves++;
+        
+        // Rewards
         const baseRoll = randomInt(state.moveGoldMin, state.moveGoldMax);
         const moveGold = Math.ceil((baseRoll + modifiers.goldPerMove) * combo.multiplier);
         state.gold += moveGold;
         state.score += Math.round(moveGold * 10 * modifiers.scoreMultiplier);
         
-        // Combo Boost
+        // Combo
         combo.value += modifiers.comboGain;
         if (combo.value > 100) {
             combo.value = 100;
-            combo.multiplier += 0.1; // Bonus for maintaining max
+            combo.multiplier += 0.1;
         }
-        
-        // Base multiplier increase based on current meter
-        // Actually, let's make multiplier discrete steps based on meter?
-        // Or just let meter be a buffer for the multiplier not to drop.
-        // Let's go with: Meter > 0 keeps multiplier alive. Meter hitting 100 boosts multiplier.
-        // Simplified: Multiplier is static 1.0 + (Meter / 100). No that's too volatile.
-        // Let's stick to: Meter decays. Every move adds Meter. 
-        // If Meter is > 50%, Multiplier = 1.5x. > 80% = 2.0x.
         updateComboMultiplier();
-
-        updateHUD();
-        deselectDisk();
+        
+        // Reset Selection
+        selectedDisk = null;
+        selectedTowerIdx = null;
+        
+        // Check Win
         checkWin();
     }
 
-    function handleInvalidMove(tower) {
-        shakeTower(tower);
+    function handleInvalidMove(towerIdx) {
+        shake(5); // Screen shake
+        Sound.invalid();
+        
         // Penalty
         state.lives--;
         combo.multiplier = 1.0;
         combo.value = 0;
-        updateHUD();
+        
+        deselectDisk();
         
         if (state.lives <= 0) {
-            gameOver();
+            go("gameover");
         }
     }
 
-    function shakeTower(tower) {
-        tower.animate([
-            { transform: 'translateX(0)' },
-            { transform: 'translateX(-5px)' },
-            { transform: 'translateX(5px)' },
-            { transform: 'translateX(0)' }
-        ], { duration: 200 });
-    }
-
+    // Check Win
     function checkWin() {
         const targetTower = towers[state.targetTowerIndex];
-        const diskCount = targetTower.querySelectorAll('.disk').length;
-
-        if (diskCount === state.disks) {
+        if (targetTower.disks.length === state.disks) {
             state.isPlaying = false;
             combo.active = false;
-            setTimeout(showLevelComplete, 500);
+            Sound.win();
+            spawnConfetti(); // Celebration!
+            wait(0.5, () => {
+                showLevelComplete();
+            });
         }
     }
 
-    function showLevelComplete() {
-        const levelBonus = randomInt(state.levelBonusMin, state.levelBonusMax);
-        state.gold += levelBonus;
-        
-        finalMovesSpan.textContent = state.moves;
-        earnedGoldSpan.textContent = levelBonus; // Just showing bonus here for now
-        messageModal.classList.remove('hidden');
+    function spawnConfetti() {
+        for (let i = 0; i < 80; i++) {
+            const p = vec2(rand(0, width()), rand(-20, -100));
+            const c = add([
+                rect(rand(8, 16), rand(8, 16)),
+                pos(p),
+                color(choose(COLORS.disks)),
+                opacity(1),
+                rotate(rand(0, 360)),
+                "confetti"
+            ]);
+            
+            // Assign properties directly to the object
+            c.speed = rand(200, 400);
+            c.drift = rand(-50, 50);
+            c.spin = rand(-5, 5);
+        }
     }
+    
+    // Confetti Logic
+    onUpdate("confetti", (c) => {
+        c.move(c.drift, c.speed);
+        c.angle += c.spin;
+        if (c.pos.y > height()) {
+            destroy(c);
+        }
+    });
 
-    function randomInt(min, max) {
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
-    function gameOver() {
-        state.isPlaying = false;
-        alert(`Game Over! Run ended at Level ${state.level}. Score: ${state.score}`);
-        // Reset to title
-        startScreen.classList.remove('hidden');
-        hud.classList.add('hidden');
-        gameControls.classList.add('hidden');
-        gameBoard.classList.add('hidden');
-        comboContainer.classList.add('hidden');
-    }
-
-    // --- Combo System ---
-
-    function gameLoop(timestamp) {
+    // Combo Loop
+    onUpdate(() => {
         if (!state.isPlaying) return;
-
-        if (!combo.lastFrameTime) combo.lastFrameTime = timestamp;
-        const deltaTime = timestamp - combo.lastFrameTime;
-
-        // Decay combo
+        
         if (combo.value > 0) {
-            combo.value -= modifiers.comboDecayRate; // * (deltaTime / 16);
+            combo.value -= modifiers.comboDecayRate;
             if (combo.value < 0) combo.value = 0;
         }
-
-        // Drop multiplier if combo empty
+        
         if (combo.value === 0 && combo.multiplier > 1.0) {
             combo.multiplier = 1.0;
         }
-
-        // Visual Update
-        comboBarFill.style.width = `${combo.value}%`;
-        
-        // Color shift based on heat
-        if (combo.value > 80) comboBarFill.style.background = '#00f3ff';
-        else if (combo.value > 50) comboBarFill.style.background = '#ffaa00';
-        else comboBarFill.style.background = '#ff0055';
-
-        comboMultiplierDisplay.textContent = combo.multiplier.toFixed(1);
-
-        combo.lastFrameTime = timestamp;
-        requestAnimationFrame(gameLoop);
-    }
-
-    function updateComboMultiplier() {
-        // Simple logic: If meter is high, bump multiplier slightly
-        // Or just let the moves naturally build it up.
-        // Let's just cap it.
-        if (combo.multiplier > 5.0) combo.multiplier = 5.0;
-    }
-
-    // --- Shop System ---
-
-    const upgrades = [
-        { id: 'life', name: 'Stability Patch', desc: '+1 Max Life', cost: 50, action: () => { state.maxLives++; state.lives++; } },
-        { id: 'gold', name: 'Bit Miner', desc: '+1 Bit per Move', cost: 100, action: () => { modifiers.goldPerMove++; } },
-        { id: 'decay', name: 'Neural Link', desc: 'Slower Combo Decay', cost: 75, action: () => { modifiers.comboDecayRate *= 0.8; } },
-        { id: 'boost', name: 'Overclock', desc: '+0.5x Base Multiplier', cost: 150, action: () => { combo.multiplier += 0.5; } },
-        { id: 'heal', name: 'Emergency Repair', desc: 'Restore 1 Life', cost: 30, action: () => { if(state.lives < state.maxLives) state.lives++; } },
-    ];
-
-    function openShop() {
-        messageModal.classList.add('hidden');
-        shopScreen.classList.remove('hidden');
-        shopGoldDisplay.textContent = state.gold;
-        renderShopItems();
-    }
-
-    function renderShopItems() {
-        shopItemsContainer.innerHTML = '';
-        upgrades.forEach(item => {
-            const div = document.createElement('div');
-            div.classList.add('shop-item');
-            if (state.gold < item.cost) div.classList.add('disabled');
-            
-            div.innerHTML = `
-                <h3>${item.name}</h3>
-                <p>${item.desc}</p>
-                <div class="price">${item.cost} Bits</div>
-            `;
-            
-            div.addEventListener('click', () => buyItem(item));
-            shopItemsContainer.appendChild(div);
-        });
-    }
-
-    function buyItem(item) {
-        if (state.gold >= item.cost) {
-            state.gold -= item.cost;
-            item.action();
-            updateHUD();
-            shopGoldDisplay.textContent = state.gold;
-            renderShopItems(); // Re-render to update disabled states
-        }
-    }
-
-    function nextLevel() {
-        state.level++;
-        startLevel();
-    }
-
-    function updateHUD() {
-        levelDisplay.textContent = state.level;
-        goldDisplay.textContent = state.gold;
-        scoreDisplay.textContent = state.score;
-        livesDisplay.textContent = '♥'.repeat(state.lives);
-    }
-
-    // --- Event Listeners ---
-    
-    towers.forEach(tower => {
-        tower.addEventListener('click', () => handleTowerClick(tower));
     });
-
-    startBtn.addEventListener('click', initRun);
-    
-    menuBtn.addEventListener('click', () => {
-        if (confirm('Abort Run? Progress will be lost.')) {
-            startScreen.classList.remove('hidden');
-            hud.classList.add('hidden');
-            gameControls.classList.add('hidden');
-            gameBoard.classList.add('hidden');
-            comboContainer.classList.add('hidden');
-            shopScreen.classList.add('hidden');
-            state.isPlaying = false;
-        }
-    });
-
-    toShopBtn.addEventListener('click', openShop);
-    nextLevelBtn.addEventListener('click', nextLevel);
 });
+
+// --- System Functions ---
+
+function initRun() {
+    Sound.init(); // Initialize audio context on user gesture
+    
+    state.level = 1;
+    state.gold = 0;
+    state.score = 0;
+    state.lives = 3;
+    state.maxLives = 3;
+    state.prevTargetTowerIndex = 2;
+    
+    modifiers.comboDecayRate = 0.3;
+    modifiers.goldPerMove = 1;
+    modifiers.goldMultiplier = 1;
+    modifiers.scoreMultiplier = 1;
+
+    startLevel();
+}
+
+function startLevel() {
+    state.moves = 0;
+    state.isPlaying = true;
+    
+    state.disks = 3 + Math.floor((state.level - 1) / 2);
+    if (state.disks > 8) state.disks = 8;
+
+    const possibleTargets = [1, 2].filter(i => i !== state.prevTargetTowerIndex);
+    const nextTarget = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+    state.targetTowerIndex = nextTarget;
+    state.prevTargetTowerIndex = nextTarget;
+
+    const baseMin = 1 + Math.floor((state.level - 1) / 3);
+    const baseMax = baseMin + 2 + Math.floor(Math.random() * 3);
+    state.moveGoldMin = baseMin;
+    state.moveGoldMax = baseMax;
+
+    const bonusBase = 20 + state.level * 10;
+    state.levelBonusMin = bonusBase;
+    state.levelBonusMax = bonusBase + 40;
+
+    // Reset Combo
+    combo.value = 0;
+    combo.multiplier = 1.0;
+    combo.active = true;
+
+    // Start Kaplay Scene
+    go("game");
+}
+
+function updateComboMultiplier() {
+    if (combo.multiplier > 5.0) combo.multiplier = 5.0;
+}
+
+function showLevelComplete() {
+    const levelBonus = randomInt(state.levelBonusMin, state.levelBonusMax);
+    state.gold += levelBonus;
+    
+    add([
+        rect(width(), height()),
+        color(0,0,0),
+        opacity(0.8),
+        fixed(),
+        z(200)
+    ]);
+    
+    addPanel(600, 400, center(), { fixed: true, z: 201 });
+    
+    add([
+        text("Level Complete!", { size: 48 }),
+        pos(center().x, 150),
+        anchor("center"),
+        fixed(),
+        z(202),
+        color(Color.fromHex(COLORS.accent))
+    ]);
+
+    add([
+        text(`Moves: ${state.moves}\nBonus: ${levelBonus}`, { size: 32, align: "center" }),
+        pos(center().x, 250),
+        anchor("center"),
+        fixed(),
+        z(202),
+        color(0, 0, 0)
+    ]);
+
+    addButton("Enter Shop", vec2(center().x, 350), () => {
+        go("shop");
+    }, 200, 60, { fixed: true, z: 202 });
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// --- Shop System ---
+
+const upgrades = [
+    { id: 'life', name: 'Stability Patch', desc: '+1 Max Life', cost: 50, action: () => { state.maxLives++; state.lives++; } },
+    { id: 'gold', name: 'Bit Miner', desc: '+1 Bit per Move', cost: 100, action: () => { modifiers.goldPerMove++; } },
+    { id: 'decay', name: 'Neural Link', desc: 'Slower Combo Decay', cost: 75, action: () => { modifiers.comboDecayRate *= 0.8; } },
+    { id: 'boost', name: 'Overclock', desc: '+0.5x Base Multiplier', cost: 150, action: () => { combo.multiplier += 0.5; } },
+    { id: 'heal', name: 'Emergency Repair', desc: 'Restore 1 Life', cost: 30, action: () => { if(state.lives < state.maxLives) state.lives++; } },
+];
+
+// Initialize
+go("menu");
