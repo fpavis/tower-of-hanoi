@@ -619,10 +619,10 @@ test('useHint: spends a hint charge and marks an assist; null when none left', (
 
 // ------------------------------------------------------------------ timer
 
-test('blitz timer: limit is (8 + 1.2 x par) seconds', () => {
+test('blitz timer: limit is (8 + 3.0 x par) seconds', () => {
   const run = createRun({ mode: 'blitz', seed: 2 });
   const sector = sectorConfig(run);
-  assert.equal(sector.timeLimit, Math.round((8 + 1.2 * sector.par) * run.mods.timeMult));
+  assert.equal(sector.timeLimit, Math.round((8 + 3.0 * sector.par) * run.mods.timeMult));
   assert.equal(sectorConfig(createRun({ mode: 'standard', seed: 2 })).timeLimit, null);
 });
 

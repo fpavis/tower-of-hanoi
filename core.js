@@ -348,7 +348,7 @@ const HanoiCore = (function () {
       apply(run) { run.mods.sizeBits = true; },
     },
     {
-      id: 'phoenix_core', name: 'Phoenix Core', rarity: 'epic', max: 2,
+      id: 'phoenix_core', name: 'Phoenix Core', rarity: 'epic', max: 1,
       desc: 'Once per run, revive at 2 integrity instead of dying.',
       apply(run) {
         run.phoenixCharges += 1;
@@ -357,10 +357,10 @@ const HanoiCore = (function () {
     },
     {
       id: 'ghost_protocol', name: 'Ghost Protocol', rarity: 'epic', max: 1,
-      desc: 'Ghost chance x2. +2 bits per ghost move.',
+      desc: 'Ghost chance x1.2. +1 bit per ghost move.',
       apply(run) {
-        run.mods.ghostChance *= 2;
-        run.mods.ghostBits += 2;
+        run.mods.ghostChance *= 1.2;
+        run.mods.ghostBits += 1;
       },
     },
     {
@@ -374,19 +374,20 @@ const HanoiCore = (function () {
     // Curses
     {
       id: 'greed_protocol', name: 'Greed Protocol', rarity: 'curse', max: 1,
-      desc: 'Move bits x1.6. Max integrity -1.',
+      desc: 'Move bits x2. Repairs cost half. Invalid attempts cost +1.',
       apply(run) {
-        run.mods.curseBitMult *= 1.6;
-        run.maxIntegrity = Math.max(1, run.maxIntegrity - 1);
-        run.integrity = Math.min(run.integrity, run.maxIntegrity);
+        run.mods.curseBitMult *= 2;
+        run.mods.shopDiscount *= 0.5;
+        run.mods.invalidCost = Math.max(run.mods.invalidCost, 3);
       },
     },
     {
       id: 'hair_trigger', name: 'Hair Trigger', rarity: 'curse', max: 1,
-      desc: 'Invalid attempts cost 2 integrity. Combo window +2 s.',
+      desc: 'Invalid attempts cost 3 integrity. Max integrity +2.',
       apply(run) {
         run.mods.invalidCost = 3;
-        run.mods.comboWindow += 2;
+        run.maxIntegrity += 2;
+        run.integrity += 2;
       },
     },
     {
@@ -727,7 +728,7 @@ const HanoiCore = (function () {
       id: def.id,
       name: def.name,
       desc: def.desc,
-      reward: Math.round((def.reward + 5 * no) * (1 + mods.questBonus)),
+      reward: Math.round((def.reward + 2 * no) * (1 + mods.questBonus)),
     };
   }
 
@@ -771,7 +772,7 @@ const HanoiCore = (function () {
       quest: questInstance(questIds[0], no, run.mods),
       bossQuest: questIds.length > 1 ? questInstance(questIds[1], no, run.mods) : null,
       // Blitz clock: (8 + 1.6 x par) seconds, scaled by time_dilation.
-      timeLimit: mode.timed ? Math.round((8 + 1.2 * par) * run.mods.timeMult) : null,
+      timeLimit: mode.timed ? Math.round((8 + 3.0 * par) * run.mods.timeMult) : null,
       gildedCount: countType(rings, 'gilded'),
       ghostCount: countType(rings, 'ghost'),
       heavyCount: countType(rings, 'heavy'),
@@ -1049,7 +1050,7 @@ const HanoiCore = (function () {
       this.stats.maxComboMult = Math.max(this.stats.maxComboMult, comboMult);
 
       const raw = Math.max(0,
-        1 + mods.bitsPerMove
+        0.5 + mods.bitsPerMove
         + (mods.sizeBits ? ring.size - 1 : 0)
         + (ring.type === 'ghost' ? mods.ghostBits : 0)
         + (mods.momentum ? this.stacks : 0)
@@ -1243,7 +1244,7 @@ const HanoiCore = (function () {
     const ratingMult = RATING_MULT[rating];
     const sMult = rating === 'S' ? run.mods.sRankMult : 1;
     extraBits += Math.round(
-      (20 + 8 * sector.no) * ratingMult * MODES[run.mode].bitMult * sector.clearMult * sMult,
+      (6 + 2 * sector.no) * ratingMult * MODES[run.mode].bitMult * sector.clearMult * sMult,
     );
     extraScore += Math.round(100 * sector.ringCount * ratingMult);
     if (sector.isBoss) extraScore += BOSS_SCORE;

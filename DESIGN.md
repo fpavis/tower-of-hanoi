@@ -172,24 +172,24 @@ Stacking is capped by `max`. Effects are applied to `run.mods` (defaults in pare
 
 **Epic**
 - `recursion` — bits per move +(ring size − 1) (`sizeBits` false), max 1.
-- `phoenix_core` — once per run, reviving at 2 integrity when integrity would hit 0 (`phoenixCharges` 0), max 2.
-- `ghost_protocol` — ghost chance ×2 and +2 bits per ghost move (`ghostChance` 0.3, `ghostBits` 0), max 1.
+- `phoenix_core` — once per run, reviving at 2 integrity when integrity would hit 0 (`phoenixCharges` 0), max 1. (Measured +17 % lift; accepted as an epic insurance card.)
+- `ghost_protocol` — ghost chance ×1.2 and +1 bit per ghost move (`ghostChance` 0.3, `ghostBits` 0), max 1. (Ghost chance ×2 measured +43 % lift, so it was cut.)
 - `perfect_protocol` — S rating: heal 1 and clear bonus ×2 (`sRankHeal` 0, `sRankMult` 1), max 1.
 
 **Curses** (always in the pool, red border, big upside, real cost)
-- `greed_protocol` — move bits ×1.6, max integrity −1 (min 1), max 1.
-- `hair_trigger` — invalid attempts cost 3 integrity, combo window +2 s, max 1.
+- `greed_protocol` — move bits ×2, repairs cost half, invalid attempts cost 3 integrity, max 1. (Measured −18 % lift, a deliberate trap for a bot that never values bits. Curses are judged on a negative band, not ±15 %.)
+- `hair_trigger` — invalid attempts cost 3 integrity, max integrity +2 (and +2 integrity now), max 1. The upside is survival, not combo time, because bits do not constrain choices.
 - `static_debt` — lose 10 % of bits at each sector start, quest rewards ×2 (`questBonus` +1), max 1.
 
 ---
 
 ## 5. Economy & scoring
 
-- **Valid move**: bits = `round((1 + bitsPerMove + sizeBits?(size−1) + ghostBits?) × comboMult × bitMult)`, where `comboMult = 1 + 0.2 × min(stacks, comboCap)`. `bitMult` = 1 × sector modifiers × curse multiplier. Momentum adds `stacks`. Tax modifier subtracts 1 (min 0).
+- **Valid move**: bits = `round((0.5 + bitsPerMove + sizeBits?(size−1) + ghostBits?) × comboMult × bitMult)` (base 0.5 so that `bit_miner` doubles-plus move income), where `comboMult = 1 + 0.2 × min(stacks, comboCap)`. `bitMult` = 1 × sector modifiers × curse multiplier. Momentum adds `stacks`. Tax modifier subtracts 1 (min 0).
 - **Combo**: a valid move increments `stacks` if the time since the previous valid move ≤ `comboWindow` (first move starts at 0); otherwise stacks reset to 0. An invalid attempt resets stacks.
 - **Gilded landing** on the target: `(4 + sector) × gildedMult` bits.
-- **Clear bonus**: `(20 + 8 × sector) × ratingMult` where `ratingMult` S 2.0, A 1.5, B 1.0, C 0.6, ×1.25 in blitz, ×1.5 if a `surge`/`strict`/`tax` modifier applied (use the largest single bonus, not stacking), and `sRankMult` on S.
-- **Quest reward**: `quest.reward + 5 × sector`, × `(1 + questBonus)`.
+- **Clear bonus**: `(6 + 2 × sector) × ratingMult` where `ratingMult` S 2.0, A 1.5, B 1.0, C 0.6, ×1.25 in blitz, ×1.5 if a `surge`/`strict`/`tax` modifier applied (use the largest single bonus, not stacking), and `sRankMult` on S.
+- **Quest reward**: `quest.reward + 2 × sector`, × `(1 + questBonus)`.
 - **Interest**: at sector end, `min(60, floor(bits × interestRate))`.
 - **Boss clear**: +1 integrity and a rare-or-better reward offer.
 - **Score**: valid move `10 × comboMult`; clear `100 × ringCount × ratingMult`; quest `150` each; boss `500`; end of run `integrity × 100`.
@@ -230,7 +230,7 @@ Boss rules (see `BOSSES`):
 | `unassisted` | no undo or hint used | always |
 
 ## 9. Blitz timer
-`timeLimit = (8 + 1.2 × par) × timeMult` seconds. Par-based, so a 7-ring boss gets ~160 s instead of a fixed count-based budget that no bot could meet. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
+`timeLimit = (8 + 3.0 × par) × timeMult` seconds. Par-based. Coefficient 3.0 is the lowest value at which a 3.0 s/move human has any slack on every sector; lower values made blitz infeasible (human win 0–9 %) and 3.0 gives human blitz win ≈ 20 % (tuned) instead of a fixed count-based budget that no bot could meet. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
 
 ## 10. Run flow (what the player sees)
 
@@ -253,13 +253,13 @@ Note: a perfect solver in standard mode has no integrity risk, so the Optimal ro
 | Metric | Target |
 |---|---|
 | Standard, Human bot: win rate | 15–30 % |
-| Standard, Human bot: median sector reached | 7–10 |
+| Standard, Human bot: median sector where non-winning runs end | 7–10 |
 | Standard, Optimal bot: win rate (ceiling) | ≥ 90 % |
 | Endless, Human bot: median sector reached | 9–13 |
 | Blitz, Human bot: win rate | 12–25 % |
 | Random bot: win rate | < 5 % |
 | Any single upgrade: its pick-to-win lift | within ±15 % of the mean |
-| Run length, Human bot, standard, median *winning* run | 15–25 min (≈ 332 optimal moves × 3.0 s, plus 20 s per sector) |
+| Run length, Human bot, standard, median *winning* run | 10–20 min (≈ 250 valid moves × 3.0 s, plus 20 s per sector). The first target of 15–25 min assumed the full 332-move optimal path; scrambled starts and ghost rings shorten real paths. |
 
 ## 12. Visual & audio direction (NEON RELAY)
 

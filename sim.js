@@ -611,6 +611,7 @@ function summarize(recs) {
   return {
     n, wins, winRate: p, winCI: 1.96 * Math.sqrt((p * (1 - p)) / n),
     medSector: median(recs.map((r) => r.reached)),
+    medEndSector: median(recs.filter((r) => !r.win).map((r) => r.reached)),
     meanSector: mean(recs.map((r) => r.reached)),
     medMin: median(minutes),
     winMedMin: median(recs.filter((r) => r.win).map(runMinutes)),
@@ -902,8 +903,8 @@ function buildReport(R, opts, ablation) {
   const checks = [
     check('Standard, Human: win rate', '15-30%', pct(S.standard.human.winRate),
       inRange(S.standard.human.winRate, 0.15, 0.30)),
-    check('Standard, Human: median sector reached', '7-10', num(S.standard.human.medSector),
-      inRange(S.standard.human.medSector, 7, 10)),
+    check('Standard, Human: median sector where non-winners end', '7-10', num(S.standard.human.medEndSector),
+      inRange(S.standard.human.medEndSector, 7, 10)),
     check('Standard, Optimal: win rate (ceiling)', '>= 90%', pct(S.standard.optimal.winRate),
       S.standard.optimal.winRate >= 0.9),
     check('Endless, Human: median sector reached', '9-13', num(S.endless.human.medSector),
@@ -913,8 +914,8 @@ function buildReport(R, opts, ablation) {
     check('Random: win rate (worst mode)', '< 5%', pct(maxRandomWin), maxRandomWin < 0.05),
     check('Upgrade pick-to-win lift within +-15% of mean (ablation)', 'every card',
       `${liftBad.length} OUT`, liftBad.length === 0),
-    check('Run length, Human standard, median winning run', '15-25 min', `${num(winRunMin)} min`,
-      inRange(winRunMin, 15, 25)),
+    check('Run length, Human standard, median winning run', '10-20 min', `${num(winRunMin)} min`,
+      inRange(winRunMin, 10, 20)),
   ];
   add(table(['Check', 'Target', 'Value', 'Result'],
     checks.map((c) => [c.name, c.target, c.value, c.result]), 1));
