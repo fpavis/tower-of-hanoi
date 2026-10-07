@@ -223,12 +223,12 @@ Boss rules (see `BOSSES`):
 | `efficient` | cost ≤ par + 2 | always |
 | `clean` | zero invalid attempts | always |
 | `chain` | combo multiplier reached ≥ 2.0 | always |
-| `swift` | elapsed ≤ 6 + 4 × ringCount seconds | always |
+| `swift` | elapsed ≤ 6 + 1.2 × par seconds | always |
 | `gilded` | a gilded ring ends on target | only if sector has a gilded ring |
 | `unassisted` | no undo or hint used | always |
 
 ## 9. Blitz timer
-`timeLimit = (10 + 4 × ringCount) × timeMult` seconds. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
+`timeLimit = (8 + 1.6 × par) × timeMult` seconds. Par-based, so a 7-ring boss gets ~210 s instead of a fixed count-based budget that no bot could meet. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
 
 ## 10. Run flow (what the player sees)
 
@@ -244,18 +244,20 @@ Keyboard and pointer both work. Canvas scales to the viewport (phone width OK, n
 
 ## 11. Balance targets (checked by `sim.js`)
 
-Bots: **Optimal** (perfect solver, 0.9 s per move), **Human** (solver with 4 % wrong-click rate, 1.4 s per move, buys/picks by a fixed priority list, uses hints/undo sensibly), **Random** (random picks, 10 % wrong clicks).
+Bots: **Optimal** (perfect solver, 0.9 s per move, no errors: this is the skill ceiling), **Human** (solver with a calibrated wrong-click rate, 2.5 s per move including planning time, buys/picks by a fixed priority list, uses hints/undo sensibly; the wrong-click rate is a stated calibration assumption and is printed in the report), **Random** (random picks, 10 % wrong clicks, 3.0 s per move).
+
+Note: a perfect solver in standard mode has no integrity risk, so the Optimal row is a ceiling (must be high, ≥ 90 %), not a difficulty target. Difficulty comes from execution errors, modifiers, bosses and timers.
 
 | Metric | Target |
 |---|---|
 | Standard, Human bot: win rate | 15–30 % |
 | Standard, Human bot: median sector reached | 7–10 |
-| Standard, Optimal bot: win rate | 60–85 % |
+| Standard, Optimal bot: win rate (ceiling) | ≥ 90 % |
 | Endless, Human bot: median sector reached | 9–13 |
 | Blitz, Human bot: win rate | 12–25 % |
 | Random bot: win rate | < 5 % |
 | Any single upgrade: its pick-to-win lift | within ±15 % of the mean |
-| Run length, Human bot, standard | 25–45 min of real play (≈ total moves × 1.4 s) |
+| Run length, Human bot, standard | 15–25 min (≈ 332 optimal moves × 2.5 s, plus sector intros and reward screens) |
 
 ## 12. Visual & audio direction (NEON RELAY)
 
