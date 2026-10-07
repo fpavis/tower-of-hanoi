@@ -244,7 +244,7 @@ Keyboard and pointer both work. Canvas scales to the viewport (phone width OK, n
 
 ## 11. Balance targets (checked by `sim.js`)
 
-Bots: **Optimal** (perfect solver, 0.9 s per move, no errors: this is the skill ceiling), **Human** (solver with a calibrated wrong-click rate, 2.5 s per move including planning time, buys/picks by a fixed priority list, uses hints/undo sensibly; the wrong-click rate is a stated calibration assumption and is printed in the report), **Random** (random picks, 10 % wrong clicks, 3.0 s per move).
+Bots: **Optimal** (perfect solver, 0.9 s per move, no errors: this is the skill ceiling), **Human** (solver with a calibrated wrong-click rate, 3.0 s per move including planning time (a 6–7 ring solve is genuinely slow to plan), buys/picks by a fixed priority list, uses hints/undo sensibly; the wrong-click rate is a stated calibration assumption and is printed in the report), **Random** (random picks, 10 % wrong clicks, 3.0 s per move). Run length is reported as bot move time plus 20 s of overhead per sector for intro and reward screens.
 
 Note: a perfect solver in standard mode has no integrity risk, so the Optimal row is a ceiling (must be high, ≥ 90 %), not a difficulty target. Difficulty comes from execution errors, modifiers, bosses and timers.
 
@@ -257,7 +257,7 @@ Note: a perfect solver in standard mode has no integrity risk, so the Optimal ro
 | Blitz, Human bot: win rate | 12–25 % |
 | Random bot: win rate | < 5 % |
 | Any single upgrade: its pick-to-win lift | within ±15 % of the mean |
-| Run length, Human bot, standard | 15–25 min (≈ 332 optimal moves × 2.5 s, plus sector intros and reward screens) |
+| Run length, Human bot, standard, median *winning* run | 15–25 min (≈ 332 optimal moves × 3.0 s, plus 20 s per sector) |
 
 ## 12. Visual & audio direction (NEON RELAY)
 
