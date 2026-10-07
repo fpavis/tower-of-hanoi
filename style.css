@@ -49,13 +49,15 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
+    width: min(100vw - 32px, 900px);
     max-width: 100%;
 }
 
+/* Kaplay writes inline width/height:100% on the canvas, so the sizing rules here are !important. */
 #game-canvas {
     display: block;
-    width: min(100vw - 32px, 900px);
-    height: auto;
+    width: 100% !important;
+    height: auto !important;
     aspect-ratio: 9 / 5;
     max-width: 100%;
     border-radius: 10px;

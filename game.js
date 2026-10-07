@@ -1660,7 +1660,8 @@ scene("play", () => {
         } catch (e) {
           qDone = null;
         }
-        const tag = qDone === null ? "" : qDone ? "  [DONE]" : "  [OPEN]";
+        // Kaplay reads square brackets as style tags, so the status uses plain words.
+        const tag = qDone === null ? "" : qDone ? "   -   DONE" : "   -   OPEN";
         drawText({
           text: "QUEST  " + (quest ? quest.name : "") + tag, size: 16, pos: vec2(16, LOGIC_H - 22), anchor: "topleft",
           color: hexC(qDone ? PAL.lime : PAL.white), outline: { width: 2, color: hexC(PAL.ink) },
