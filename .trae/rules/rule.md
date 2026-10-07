@@ -1,5 +1,5 @@
 ## 1. Stack
-- **Engine**: Kaplay `v3001.0.12` (CDN).
+- **Engine**: Kaplay `v3001.0.19` (CDN).
 - **Lang**: JS (ES6+).
 - **Audio**: Web Audio API (Procedural only).
 

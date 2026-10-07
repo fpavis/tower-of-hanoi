@@ -108,6 +108,70 @@ const COLORS = {
     ]
 };
 
+// --- Kaplay-style Visual Helpers ---
+
+// Dot-grid backdrop drawn behind every scene
+function drawBackdrop() {
+    const step = 40;
+    for (let x = step / 2; x < width(); x += step) {
+        for (let y = step / 2; y < height(); y += step) {
+            drawCircle({ pos: vec2(x, y), radius: 1.5, color: rgb(255, 255, 255), opacity: 0.07 });
+        }
+    }
+}
+
+// Slowly drifting, bobbing disks for the menu background
+function spawnFloatingDisks(count) {
+    for (let i = 0; i < count; i++) {
+        add([
+            rect(rand(50, 110), 18, { radius: 9 }),
+            pos(rand(0, width()), rand(0, height())),
+            anchor("center"),
+            color(Color.fromHex(COLORS.disks[i % COLORS.disks.length])),
+            opacity(0.18),
+            outline(3, COLORS.outline),
+            z(-50),
+            {
+                speed: rand(12, 30),
+                phase: rand(0, Math.PI * 2),
+                update() {
+                    this.pos.y -= this.speed * dt();
+                    this.phase += dt();
+                    this.angle = Math.sin(this.phase) * 8;
+                    if (this.pos.y < -40) this.pos.y = height() + 40;
+                }
+            }
+        ]);
+    }
+}
+
+// Little dust puff when a disk lands
+function spawnBurst(p, hex) {
+    const life = 0.45;
+    for (let i = 0; i < 8; i++) {
+        const angle = rand(0, Math.PI * 2);
+        const speed = rand(60, 140);
+        add([
+            circle(rand(2, 4)),
+            pos(p.x, p.y),
+            color(Color.fromHex(hex)),
+            z(50),
+            {
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 40,
+                update() {
+                    this.pos.x += this.vx * dt();
+                    this.pos.y += this.vy * dt();
+                    this.vy += 300 * dt(); // gravity
+                    this.life = (this.life ?? life) - dt();
+                    this.opacity = Math.max(0, this.life / life);
+                    if (this.life <= 0) destroy(this);
+                }
+            }
+        ]);
+    }
+}
+
 // --- UI Components ---
 function addButton(txt, p, f, width = 200, height = 60, opts = {}) {
     const isFixed = opts.fixed || false;
@@ -184,7 +248,7 @@ function addPanel(width, height, p, opts = {}) {
         rect(width, height, { radius: 24 }),
         pos(p),
         anchor("center"),
-        color(255, 255, 255),
+        color(Color.fromHex(COLORS.base)),
         outline(6, COLORS.outline),
         ...(isFixed ? [fixed()] : []),
         z(zIndex),
@@ -206,24 +270,31 @@ function fadeTransition() {
         .onEnd(() => destroy(f));
 }
 
+// Every scene starts here: backdrop layer + fade in
+function enterScene() {
+    add([z(-100), fixed(), { draw: drawBackdrop }]);
+    fadeTransition();
+}
+
 // Menu Scene
 scene("menu", () => {
-    fadeTransition();
+    enterScene();
 
-    // Title Shadow
-    add([
-        text("Tower of Hanoi", { size: 64, align: "center" }),
-        pos(center().x + 4, 154),
-        anchor("center"),
-        color(0, 0, 0),
-        opacity(0.5),
-    ]);
+    spawnFloatingDisks(7);
 
+    // Title: chunky outlined text that bobs gently
     add([
         text("Tower of Hanoi", { size: 64, align: "center" }),
         pos(center().x, 150),
         anchor("center"),
         color(COLORS.accent),
+        outline(6, COLORS.outline),
+        {
+            baseY: 150,
+            update() {
+                this.pos.y = this.baseY + Math.sin(time() * 2) * 4;
+            }
+        }
     ]);
     
     add([
@@ -231,6 +302,7 @@ scene("menu", () => {
         pos(center().x, 210),
         anchor("center"),
         color(COLORS.text),
+        outline(3, COLORS.outline),
     ]);
 
     addButton("Start Run", vec2(center().x, 350), () => {
@@ -239,12 +311,11 @@ scene("menu", () => {
 
     // Bean Mascot
     const bean = add([
-        rect(60, 100, { radius: 30 }),
+        rect(60, 100, { radius: 28 }),
         pos(width() - 100, height() - 50),
         anchor("bot"),
         color(COLORS.accent),
         outline(4, COLORS.outline),
-        rotate(0)
     ]);
     
     // Eyes
@@ -276,13 +347,14 @@ scene("menu", () => {
 
 // Shop Scene
 scene("shop", () => {
-    fadeTransition();
+    enterScene();
 
     add([
         text("Upgrade Module", { size: 48 }),
         pos(center().x, 40),
         anchor("center"),
         color(COLORS.accent),
+        outline(5, COLORS.outline),
     ]);
 
     add([
@@ -353,7 +425,7 @@ scene("shop", () => {
 
 // Game Over Scene
 scene("gameover", () => {
-    fadeTransition();
+    enterScene();
 
     addPanel(500, 300, center());
 
@@ -362,13 +434,14 @@ scene("gameover", () => {
         pos(center().x, 180),
         anchor("center"),
         color(COLORS.danger),
+        outline(6, COLORS.outline),
     ]);
 
     add([
         text(`Score: ${state.score}\nLevel: ${state.level}`, { size: 32, align: "center" }),
         pos(center().x, 280),
         anchor("center"),
-        color(0, 0, 0),
+        color(COLORS.text),
     ]);
 
     addButton("Main Menu", vec2(center().x, 380), () => {
@@ -378,7 +451,7 @@ scene("gameover", () => {
 
 // Main Game Scene
 scene("game", () => {
-    fadeTransition();
+    enterScene();
 
     console.log("Entering Game Scene");
     
@@ -442,7 +515,7 @@ scene("game", () => {
     // Abort Button (Small)
     const abortBtn = hudLayer.add([
         rect(100, 40, { radius: 8 }),
-        pos(width() - 70, height() - 40),
+        pos(width() - 70, 125),
         anchor("center"),
         area(),
         color(COLORS.danger),
@@ -511,6 +584,16 @@ scene("game", () => {
     for (let i = 0; i < 3; i++) {
         const xPos = startX + (i * towerGap);
         
+        // Base drop shadow (same offset language as the buttons)
+        add([
+            rect(baseWidth, baseHeight, { radius: 8 }),
+            pos(xPos + 4, groundY + 4),
+            anchor("bot"),
+            color(0, 0, 0),
+            opacity(0.35),
+            z(-2),
+        ]);
+
         // Base
         add([
             rect(baseWidth, baseHeight, { radius: 8 }),
@@ -523,7 +606,7 @@ scene("game", () => {
         ]);
 
         // Pole
-        add([
+        const pole = add([
             rect(towerWidth, towerHeight, { radius: 8 }),
             pos(xPos, groundY),
             anchor("bot"),
@@ -532,6 +615,15 @@ scene("game", () => {
             area(),
             "pole",
             { towerId: i }
+        ]);
+
+        // Rounded cap on top of the pole
+        pole.add([
+            circle(towerWidth * 0.75),
+            pos(0, -towerHeight),
+            anchor("center"),
+            color(Color.fromHex(COLORS.disks[5])),
+            outline(2, COLORS.outline),
         ]);
         
         // Hitbox for clicking the tower area
@@ -553,7 +645,17 @@ scene("game", () => {
                 anchor("bot"),
                 color(Color.fromHex(COLORS.accent)),
                 opacity(0.1),
+                outline(3, COLORS.accent),
                 z(-1)
+            ]);
+
+            add([
+                text("TARGET", { size: 16 }),
+                pos(xPos, groundY - towerHeight - 28),
+                anchor("center"),
+                color(Color.fromHex(COLORS.accent)),
+                outline(3, COLORS.outline),
+                z(5),
             ]);
             
             // Pulse effect
@@ -611,6 +713,15 @@ scene("game", () => {
                 size: i,
                 towerId: 0 
             }
+        ]);
+
+        // Glossy highlight strip for a chunky, toy-like look
+        disk.add([
+            rect(diskWidth - 28, 5, { radius: 3 }),
+            pos(0, -diskHeight + 7),
+            anchor("center"),
+            color(255, 255, 255),
+            opacity(0.35),
         ]);
 
         startTower.disks.push(disk);
@@ -713,6 +824,13 @@ scene("game", () => {
         // Move Animation
         tween(disk.pos.x, towerX, moveTime, (val) => disk.pos.x = val, easings.easeInOutQuad);
         tween(disk.pos.y, targetY, moveTime, (val) => disk.pos.y = val, easings.easeOutBack);
+
+        // Landing juice: squash and dust burst
+        wait(moveTime, () => {
+            disk.scale = vec2(1.12, 0.88);
+            tween(disk.scale, vec2(1), 0.25, (val) => disk.scale = val, easings.easeOutQuad);
+            spawnBurst(vec2(towerX, targetY), COLORS.disks[Math.min(disk.size - 1, 7)]);
+        });
         
         // Update State
         state.moves++;
@@ -886,7 +1004,8 @@ function showLevelComplete() {
         anchor("center"),
         fixed(),
         z(202),
-        color(Color.fromHex(COLORS.accent))
+        color(Color.fromHex(COLORS.accent)),
+        outline(5, COLORS.outline)
     ]);
 
     add([
@@ -895,7 +1014,7 @@ function showLevelComplete() {
         anchor("center"),
         fixed(),
         z(202),
-        color(0, 0, 0)
+        color(COLORS.text)
     ]);
 
     addButton("Enter Shop", vec2(center().x, 350), () => {
