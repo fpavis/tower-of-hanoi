@@ -1,31 +1,70 @@
-/* Only keep container and canvas styles */
+/* HANOI//PROTOCOL page shell. The canvas is the whole UI; this file only frames it. */
+
 :root {
-    --bg-color: #0f1215;
+    --page-bg: #07060f;
+    --canvas-edge: rgba(11, 10, 24, 0.35);
+    --canvas-glow: rgba(255, 46, 136, 0.18);
+    --focus-ring: #3cf2ff;
 }
 
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --page-bg: #07060f;
+        --canvas-edge: rgba(60, 242, 255, 0.35);
+        --canvas-glow: rgba(255, 46, 136, 0.22);
+        --focus-ring: #3cf2ff;
+    }
+}
+
+:root[data-theme="dark"] {
+    --page-bg: #07060f;
+    --canvas-edge: rgba(60, 242, 255, 0.35);
+    --canvas-glow: rgba(255, 46, 136, 0.22);
+    --focus-ring: #3cf2ff;
+}
+
+html,
 body {
     margin: 0;
     padding: 0;
-    background-color: var(--bg-color);
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    max-width: 100%;
+    background: #07060f;
+    background-color: var(--page-bg);
+    color: #f4f7ff;
+}
+
+body {
     min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-x: hidden;
     user-select: none;
-    overflow: hidden;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
-#game-container {
-    position: relative;
-    width: 900px;
-    height: 500px;
+#stage {
     display: flex;
     justify-content: center;
     align-items: center;
+    max-width: 100%;
 }
 
-canvas {
+#game-canvas {
     display: block;
-    box-shadow: 0 0 20px rgba(0,0,0,0.5);
-    border-radius: 4px;
+    width: min(100vw - 32px, 900px);
+    height: auto;
+    aspect-ratio: 9 / 5;
+    max-width: 100%;
+    border-radius: 10px;
+    background: #07060f;
+    box-shadow: 0 0 0 1px var(--canvas-edge), 0 0 40px var(--canvas-glow);
+    touch-action: manipulation;
+    outline: none;
+}
+
+#game-canvas:focus-visible {
+    box-shadow: 0 0 0 2px var(--focus-ring), 0 0 40px var(--canvas-glow);
 }
