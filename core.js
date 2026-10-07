@@ -779,4 +779,595 @@ const HanoiCore = (function () {
     });
   }
 
-  // @@NEXT@@
+  // ------------------------------------------------------------------ run
+  function todaySeed() {
+    const now = new Date();
+    return now.getUTCFullYear() * 10000 + (now.getUTCMonth() + 1) * 100 + now.getUTCDate();
+  }
+
+  function defaultMods() {
+    return {
+      bitsPerMove: 0,
+      comboWindow: 4,
+      comboCap: 5,
+      hintsPerSector: 0,
+      questBonus: 0,
+      forecast: false,
+      reinforced: 0,
+      interestRate: 0,
+      repairPerSector: 0,
+      undoCharges: 0,
+      gildedChance: 0.35,
+      gildedMult: 1,
+      ghostChance: 0.3,
+      ghostBits: 0,
+      heavyFreePar: false,
+      shopDiscount: 1,
+      momentum: false,
+      timeMult: 1,
+      sizeBits: false,
+      phoenixCharges: 0,
+      sRankHeal: 0,
+      sRankMult: 1,
+      curseBitMult: 1,
+      invalidCost: 1,
+      staticDebt: false,
+    };
+  }
+
+  // options: { mode, seed?, ascension? }. Daily mode without a seed uses
+  // today's UTC date as YYYYMMDD.
+  function createRun(options) {
+    const opts = options || {};
+    const modeId = opts.mode || 'standard';
+    if (!MODES[modeId]) throw new RangeError('Unknown mode: ' + modeId);
+    let seed = opts.seed;
+    if (seed === undefined || seed === null) {
+      seed = modeId === 'daily' ? todaySeed() : Math.floor(Math.random() * 4294967296);
+    }
+    const ascension = Boolean(opts.ascension);
+    const maxIntegrity = ascension ? ASCENSION_INTEGRITY : BASE_INTEGRITY;
+    return {
+      mode: modeId,
+      seed,
+      rng: makeRng(seed),
+      ascension,
+      sectorNo: 0,
+      integrity: maxIntegrity,
+      maxIntegrity,
+      bits: 0,
+      score: 0,
+      upgrades: {},
+      undoCharges: 0,
+      hintsLeft: 0,
+      phoenixCharges: 0,
+      mods: defaultMods(),
+      nextPlan: null,
+      offer: null,
+      over: false,
+      victory: false,
+      endReason: null,
+      sectorsCleared: 0,
+      lastSectorBoss: false,
+      stats: { validMoves: 0, invalidMoves: 0, undos: 0, hints: 0, cardsTaken: [] },
+    };
+  }
+
+  function endRun(run, reason) {
+    if (run.over) return;
+    run.over = true;
+    run.endReason = reason;
+    run.score += run.integrity * 100;
+  }
+
+  // Returns 'ok', 'revived' or 'dead'. Phoenix Core revives at 2 integrity.
+  function loseIntegrity(run, amount, cause) {
+    run.integrity -= amount;
+    if (run.integrity > 0) return 'ok';
+    if (run.phoenixCharges > 0) {
+      run.phoenixCharges -= 1;
+      run.integrity = Math.min(PHOENIX_REVIVE_INTEGRITY, run.maxIntegrity);
+      return 'revived';
+    }
+    run.integrity = 0;
+    endRun(run, cause);
+    return 'dead';
+  }
+
+  function recordLoss(run, amount, cause, events) {
+    const outcome = loseIntegrity(run, amount, cause);
+    if (outcome === 'revived') events.push('revive');
+    if (outcome === 'dead') events.push('dead');
+  }
+
+  // ------------------------------------------------------------------ board
+  function isTowerIndex(index) {
+    return Number.isInteger(index) && index >= 0 && index <= 2;
+  }
+
+  class Board {
+    constructor(run, sector) {
+      this.run = run;
+      this.sector = sector;
+      this.towers = sector.start.map((tower) => tower.slice());
+      this.history = [];
+      this.stacks = 0;
+      this.lastMoveT = null;
+      this.clock = 0;
+      this.timerStart = 0;
+      this.aegisForgiven = false;
+      this.reinforcedUsed = false;
+      this.finished = false;
+      this.stats = {
+        cost: 0,
+        validMoves: 0,
+        invalidMoves: 0,
+        maxComboMult: 1,
+        assists: 0,
+        elapsed: 0,
+        gildedOnTarget: 0,
+        undos: 0,
+        hints: 0,
+        timeouts: 0,
+        bitsEarned: 0,
+        scoreEarned: 0,
+      };
+    }
+
+    isSolved() {
+      return this.towers[this.sector.target].length === this.sector.rings.length;
+    }
+
+    comboWindow() {
+      return Math.max(MIN_COMBO_WINDOW, this.run.mods.comboWindow + this.sector.comboWindowMod);
+    }
+
+    comboCap() {
+      return this.run.mods.comboCap + this.sector.comboCapMod;
+    }
+
+    comboMultFor(stacks) {
+      return 1 + COMBO_STEP * Math.min(stacks, this.comboCap());
+    }
+
+    invalidCost() {
+      return Math.max(this.sector.invalidCost, this.run.mods.invalidCost);
+    }
+
+    // Every tryMove/timeout result has the same shape; `fields` overrides.
+    outcome(fields) {
+      return Object.assign({
+        ok: false,
+        ring: null,
+        costUnits: 0,
+        bitsGained: 0,
+        scoreGained: 0,
+        comboStacks: this.stacks,
+        comboMult: this.comboMultFor(this.stacks),
+        integrityLost: 0,
+        forgiven: false,
+        events: [],
+        solved: this.isSolved(),
+        failed: this.run.over,
+      }, fields);
+    }
+
+    canMove(from, to) {
+      if (!isTowerIndex(from) || !isTowerIndex(to)) return { ok: false, reason: 'range' };
+      if (this.run.over) return { ok: false, reason: 'over' };
+      if (this.isSolved()) return { ok: false, reason: 'solved' };
+      if (from === to) return { ok: false, reason: 'same' };
+      if (this.towers[from].length === 0) return { ok: false, reason: 'empty' };
+      const mover = topOf(this.towers[from]);
+      if (!stackLegal(mover, topOf(this.towers[to]))) return { ok: false, reason: 'size' };
+      return { ok: true };
+    }
+
+    // t = seconds since sector start. Drives the combo window.
+    tryMove(from, to, t) {
+      const now = Number.isFinite(t) ? t : this.clock;
+      this.clock = Math.max(this.clock, now);
+      const check = this.canMove(from, to);
+      if (check.reason === 'size') return this.rejectSize(from, to);
+      if (!check.ok) return this.outcome({ reason: check.reason });
+      return this.applyValidMove(from, to, now);
+    }
+
+    rejectSize(from, to) {
+      const run = this.run;
+      const mover = topOf(this.towers[from]);
+      const onto = topOf(this.towers[to]);
+      const events = ['invalid'];
+      this.stats.invalidMoves += 1;
+      run.stats.invalidMoves += 1;
+      if (this.stacks > 0) events.push('combo-break');
+      this.stacks = 0;
+      this.lastMoveT = null;
+      const forgiven = this.forgive(mover, onto, events);
+      let integrityLost = 0;
+      if (!forgiven) {
+        integrityLost = this.invalidCost();
+        recordLoss(run, integrityLost, 'invalid', events);
+      }
+      return this.outcome({
+        reason: 'size',
+        ring: mover,
+        integrityLost,
+        forgiven,
+        events,
+        failed: run.over,
+      });
+    }
+
+    // Aegis (first attempt involving one per sector) takes priority over
+    // Reinforced (first attempt per sector). Each consumes one forgiveness.
+    forgive(mover, onto, events) {
+      const aegisInvolved = mover.type === 'aegis' || (onto !== null && onto.type === 'aegis');
+      if (!this.aegisForgiven && aegisInvolved) {
+        this.aegisForgiven = true;
+        events.push('aegis-forgive');
+        return true;
+      }
+      if (!this.reinforcedUsed && this.run.mods.reinforced > 0) {
+        this.reinforcedUsed = true;
+        events.push('aegis-forgive');
+        return true;
+      }
+      return false;
+    }
+
+    applyValidMove(from, to, now) {
+      const run = this.run;
+      const mods = run.mods;
+      const sector = this.sector;
+      const modeBit = MODES[run.mode].bitMult;
+      const events = ['move'];
+      const beforeStacks = this.stacks;
+      const beforeLast = this.lastMoveT;
+
+      const ring = this.towers[from].pop();
+      const onto = topOf(this.towers[to]);
+      const bypass = onto !== null && ring.size > onto.size; // legal only via ghost
+      this.towers[to].push(ring);
+
+      // Combo: the first move starts at 0. Later moves extend the chain when
+      // they arrive within the window; otherwise the chain resets.
+      if (this.lastMoveT === null) {
+        this.stacks = 0;
+      } else if (now - this.lastMoveT <= this.comboWindow()) {
+        this.stacks += 1;
+      } else {
+        if (this.stacks > 0) events.push('combo-break');
+        this.stacks = 0;
+      }
+      this.lastMoveT = now;
+      this.stats.elapsed = now;
+      const comboMult = this.comboMultFor(this.stacks);
+      this.stats.maxComboMult = Math.max(this.stats.maxComboMult, comboMult);
+
+      const raw = Math.max(0,
+        1 + mods.bitsPerMove
+        + (mods.sizeBits ? ring.size - 1 : 0)
+        + (ring.type === 'ghost' ? mods.ghostBits : 0)
+        + (mods.momentum ? this.stacks : 0)
+        - sector.taxPerMove);
+      const bitMult = modeBit * sector.bitMult * mods.curseBitMult;
+      const bits = Math.round(raw * comboMult * bitMult);
+      const scoreGained = Math.round(10 * comboMult);
+
+      const costUnits = costOf(ring, heavyCostFor(run));
+      this.stats.cost += costUnits;
+      if (bypass) events.push('ghost');
+      if (ring.type === 'heavy') events.push('heavy');
+
+      let gildedBonus = 0;
+      if (to === sector.target) {
+        events.push('land-target');
+        if (ring.type === 'gilded') {
+          gildedBonus = Math.round((4 + sector.no) * mods.gildedMult * sector.gildedMult * modeBit);
+          this.stats.gildedOnTarget += 1;
+          events.push('gilded');
+        }
+      }
+      const bitsGained = bits + gildedBonus;
+
+      this.history.push({ from, to, ring, beforeStacks, beforeLast });
+      this.stats.validMoves += 1;
+      run.stats.validMoves += 1;
+      this.stats.bitsEarned += bitsGained;
+      this.stats.scoreEarned += scoreGained;
+      run.bits += bitsGained;
+      run.score += scoreGained;
+      if (this.isSolved()) events.push('solved');
+
+      return this.outcome({
+        ok: true,
+        ring,
+        costUnits,
+        bitsGained,
+        scoreGained,
+        comboStacks: this.stacks,
+        comboMult,
+        events,
+      });
+    }
+
+    // Reverts the last valid move (positions and combo state). Bits, score
+    // and cost stay. Spends one undo charge.
+    undo() {
+      if (this.run.over) return { ok: false, reason: 'over' };
+      if (this.isSolved()) return { ok: false, reason: 'solved' };
+      if (this.history.length === 0) return { ok: false, reason: 'nothing' };
+      if (this.run.undoCharges <= 0) return { ok: false, reason: 'no-charges' };
+      const last = this.history.pop();
+      this.towers[last.to].pop();
+      this.towers[last.from].push(last.ring);
+      this.stacks = last.beforeStacks;
+      this.lastMoveT = last.beforeLast;
+      this.run.undoCharges -= 1;
+      this.run.stats.undos += 1;
+      this.stats.undos += 1;
+      this.stats.assists += 1;
+      return { ok: true, ring: last.ring };
+    }
+
+    // First step of an optimal path from the current state, or null.
+    // Spends nothing and marks nothing.
+    hint() {
+      if (this.run.over || this.isSolved()) return null;
+      const solved = solveCached(this.towers, this.sector.target, heavyCostFor(this.run));
+      if (!solved.exact || solved.path.length === 0) return null;
+      const step = solved.path[0];
+      return { from: step.from, to: step.to };
+    }
+
+    // Spends a hint charge and marks an assist. Returns null when no charge
+    // is left or no hint is available.
+    useHint() {
+      if (this.run.hintsLeft <= 0) return null;
+      const step = this.hint();
+      if (!step) return null;
+      this.run.hintsLeft -= 1;
+      this.run.stats.hints += 1;
+      this.stats.hints += 1;
+      this.stats.assists += 1;
+      return step;
+    }
+
+    // Timed sectors only. Costs 1 integrity and resets the board to
+    // sector.start. The timer restarts at t (or the last known time).
+    timeout(t) {
+      if (this.run.over) return { ok: false, reason: 'over' };
+      if (this.sector.timeLimit === null) return { ok: false, reason: 'untimed' };
+      if (this.isSolved()) return { ok: false, reason: 'solved' };
+      const now = Number.isFinite(t) ? t : this.clock;
+      this.clock = Math.max(this.clock, now);
+      this.timerStart = now;
+      this.towers = this.sector.start.map((tower) => tower.slice());
+      this.history = [];
+      this.stacks = 0;
+      this.lastMoveT = null;
+      this.stats.timeouts += 1;
+      const events = [];
+      recordLoss(this.run, 1, 'timeout', events);
+      return this.outcome({ ok: true, integrityLost: 1, events });
+    }
+
+    // Seconds left on the blitz clock at time t, or null when untimed.
+    timeLeft(t) {
+      if (this.sector.timeLimit === null) return null;
+      const now = Number.isFinite(t) ? t : this.clock;
+      return Math.max(0, this.sector.timeLimit - (now - this.timerStart));
+    }
+  }
+
+  // ------------------------------------------------------------------ sector end
+  function ratingFor(cost, par) {
+    if (cost <= par) return 'S';
+    if (cost <= Math.ceil(par * 1.25)) return 'A';
+    if (cost <= Math.ceil(par * 1.75)) return 'B';
+    return 'C';
+  }
+
+  function gainIntegrity(run, amount) {
+    const before = run.integrity;
+    run.integrity = Math.min(run.maxIntegrity, run.integrity + amount);
+    return run.integrity - before;
+  }
+
+  function isVictorySector(run, sector) {
+    return sector.isBoss && sector.no === MODES[run.mode].sectors;
+  }
+
+  // Closes a solved sector. Returns null if the board is unsolved, already
+  // finished, or the run is over. quests[].reward is the offered amount and is
+  // paid only when done.
+  function finishSector(run, board, t) {
+    const sector = board.sector;
+    if (board.finished || run.over || !board.isSolved()) return null;
+    board.finished = true;
+    if (Number.isFinite(t)) board.stats.elapsed = t;
+    const stats = board.stats;
+    const rating = ratingFor(stats.cost, sector.par);
+    run.offer = null;
+    run.sectorsCleared += 1;
+    run.lastSectorBoss = sector.isBoss;
+
+    let extraBits = 0;
+    let extraScore = 0;
+    const questList = sector.bossQuest ? [sector.quest, sector.bossQuest] : [sector.quest];
+    const quests = questList.map((quest) => {
+      const def = QUESTS.find((q) => q.id === quest.id);
+      const done = def.check(stats, sector);
+      if (done) {
+        extraBits += quest.reward;
+        extraScore += QUEST_SCORE;
+      }
+      return { id: quest.id, name: quest.name, done, reward: quest.reward };
+    });
+
+    // Clear bonus: the largest single multiplier applies, not a product.
+    const ratingMult = RATING_MULT[rating];
+    const sMult = rating === 'S' ? run.mods.sRankMult : 1;
+    extraBits += Math.round(
+      (20 + 8 * sector.no) * ratingMult * MODES[run.mode].bitMult * sector.clearMult * sMult,
+    );
+    extraScore += Math.round(100 * sector.ringCount * ratingMult);
+    if (sector.isBoss) extraScore += BOSS_SCORE;
+    run.bits += extraBits;
+    run.score += extraScore;
+
+    let healed = 0;
+    if (rating === 'S') healed += gainIntegrity(run, run.mods.sRankHeal);
+    if (sector.isBoss) healed += gainIntegrity(run, 1);
+
+    const interest = Math.min(INTEREST_CAP, Math.floor(run.bits * run.mods.interestRate));
+    run.bits += interest;
+
+    const victory = isVictorySector(run, sector);
+    if (victory) {
+      run.victory = true;
+      endRun(run, 'victory');
+    } else if (sector.no < MODES[run.mode].sectors) {
+      run.nextPlan = planSector(run, sector.no + 1);
+    }
+
+    return {
+      rating,
+      cost: stats.cost,
+      par: sector.par,
+      quests,
+      bitsEarned: stats.bitsEarned + extraBits,
+      scoreEarned: stats.scoreEarned + extraScore,
+      interest,
+      healed,
+      bossReward: sector.isBoss,
+      victory,
+    };
+  }
+
+  // ------------------------------------------------------------------ rewards
+  function cardAvailable(run, card) {
+    if (card.requires && run.mode !== card.requires) return false;
+    return (run.upgrades[card.id] || 0) < card.max;
+  }
+
+  function cardPool(run, rarity, taken) {
+    return UPGRADES.filter((card) =>
+      card.rarity === rarity && cardAvailable(run, card) && taken.indexOf(card.id) < 0);
+  }
+
+  function rarityOf(id) {
+    return UPGRADES.find((card) => card.id === id).rarity;
+  }
+
+  // Picks a rarity by weight, then a card of that rarity. Returns an id or null.
+  function rollCard(run, taken, weights) {
+    const options = Object.keys(weights)
+      .map((rarity) => ({ rarity, weight: weights[rarity] }))
+      .filter((option) => cardPool(run, option.rarity, taken).length > 0);
+    if (options.length === 0) return null;
+    const rarity = options[pickWeightedIndex(run.rng, options)].rarity;
+    return run.rng.pick(cardPool(run, rarity, taken)).id;
+  }
+
+  function buildOffer(run, excluded) {
+    const offer = [];
+    let curseDrawn = false;
+    for (let slot = 0; slot < OFFER_SIZE; slot += 1) {
+      const taken = excluded.concat(offer);
+      let id = null;
+      if (!curseDrawn && run.rng.chance(CURSE_CHANCE)) {
+        id = rollCard(run, taken, CURSE_WEIGHTS);
+        if (id !== null) curseDrawn = true;
+      }
+      if (id === null) id = rollCard(run, taken, RARITY_WEIGHTS);
+      if (id === null) break;
+      offer.push(id);
+    }
+    const bossGuarantee = run.lastSectorBoss && offer.length > 0
+      && !offer.some((id) => rarityOf(id) === 'rare' || rarityOf(id) === 'epic');
+    if (bossGuarantee) {
+      const rest = excluded.concat(offer.slice(0, -1));
+      const id = rollCard(run, rest, RARE_PLUS_WEIGHTS);
+      if (id !== null) offer[offer.length - 1] = id;
+    }
+    return offer;
+  }
+
+  // Returns the three offered card ids. Idempotent until a card is taken or
+  // the offer is rerolled.
+  function rewardOffer(run) {
+    if (run.over) return null;
+    if (!run.offer) run.offer = buildOffer(run, []);
+    return run.offer.slice();
+  }
+
+  function shopCost(base, run) {
+    return Math.round((base + SHOP_STEP * run.sectorsCleared) * run.mods.shopDiscount);
+  }
+
+  function rerollCost(run) {
+    return shopCost(REROLL_BASE, run);
+  }
+
+  function repairCost(run) {
+    return shopCost(REPAIR_BASE, run);
+  }
+
+  // Replaces the offer with a fresh one that avoids the current cards.
+  function reroll(run) {
+    if (run.over || !run.offer) return null;
+    const cost = rerollCost(run);
+    if (run.bits < cost) return null;
+    run.bits -= cost;
+    run.offer = buildOffer(run, run.offer);
+    return run.offer.slice();
+  }
+
+  // Applies one stack of an offered card and clears the offer.
+  function takeCard(run, cardId) {
+    if (run.over || !run.offer || run.offer.indexOf(cardId) < 0) return null;
+    const card = UPGRADES.find((c) => c.id === cardId);
+    if (!card || !cardAvailable(run, card)) return null;
+    run.upgrades[cardId] = (run.upgrades[cardId] || 0) + 1;
+    card.apply(run);
+    run.stats.cardsTaken.push(cardId);
+    run.offer = null;
+    return card;
+  }
+
+  function buyRepair(run) {
+    if (run.over || run.integrity >= run.maxIntegrity) return false;
+    const cost = repairCost(run);
+    if (run.bits < cost) return false;
+    run.bits -= cost;
+    run.integrity += 1;
+    return true;
+  }
+
+  // ------------------------------------------------------------------ exports
+  return {
+    RING_TYPES,
+    MODES,
+    UPGRADES,
+    MODIFIERS,
+    QUESTS,
+    BOSSES,
+    makeRng,
+    createRun,
+    sectorConfig,
+    Board,
+    finishSector,
+    rewardOffer,
+    rerollCost,
+    reroll,
+    takeCard,
+    repairCost,
+    buyRepair,
+    parOf,
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = HanoiCore;
+else globalThis.HanoiCore = HanoiCore;
