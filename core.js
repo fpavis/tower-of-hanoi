@@ -180,7 +180,7 @@ const HanoiCore = (function () {
     {
       id: 'strict', name: 'Strict', desc: 'Invalid attempts cost 2 integrity. Clear bonus x1.5.', minSector: 2, weight: 3,
       apply(sector) {
-        sector.invalidCost = 2;
+        sector.invalidCost = 3;
         raiseClearMult(sector, 1.5);
       },
     },
@@ -385,7 +385,7 @@ const HanoiCore = (function () {
       id: 'hair_trigger', name: 'Hair Trigger', rarity: 'curse', max: 1,
       desc: 'Invalid attempts cost 2 integrity. Combo window +2 s.',
       apply(run) {
-        run.mods.invalidCost = 2;
+        run.mods.invalidCost = 3;
         run.mods.comboWindow += 2;
       },
     },
@@ -676,7 +676,7 @@ const HanoiCore = (function () {
       clearMult: 1,
       comboWindowMod: 0,
       comboCapMod: 0,
-      invalidCost: 1,
+      invalidCost: 2,
       taxPerMove: 0,
       fog: false,
       scramble: false,
@@ -771,7 +771,7 @@ const HanoiCore = (function () {
       quest: questInstance(questIds[0], no, run.mods),
       bossQuest: questIds.length > 1 ? questInstance(questIds[1], no, run.mods) : null,
       // Blitz clock: (8 + 1.6 x par) seconds, scaled by time_dilation.
-      timeLimit: mode.timed ? Math.round((8 + 1.6 * par) * run.mods.timeMult) : null,
+      timeLimit: mode.timed ? Math.round((8 + 1.2 * par) * run.mods.timeMult) : null,
       gildedCount: countType(rings, 'gilded'),
       ghostCount: countType(rings, 'ghost'),
       heavyCount: countType(rings, 'heavy'),
@@ -810,7 +810,7 @@ const HanoiCore = (function () {
       sRankHeal: 0,
       sRankMult: 1,
       curseBitMult: 1,
-      invalidCost: 1,
+      invalidCost: 2,
       staticDebt: false,
     };
   }

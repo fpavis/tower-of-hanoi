@@ -178,7 +178,7 @@ Stacking is capped by `max`. Effects are applied to `run.mods` (defaults in pare
 
 **Curses** (always in the pool, red border, big upside, real cost)
 - `greed_protocol` — move bits ×1.6, max integrity −1 (min 1), max 1.
-- `hair_trigger` — invalid attempts cost 2 integrity, combo window +2 s, max 1.
+- `hair_trigger` — invalid attempts cost 3 integrity, combo window +2 s, max 1.
 - `static_debt` — lose 10 % of bits at each sector start, quest rewards ×2 (`questBonus` +1), max 1.
 
 ---
@@ -200,10 +200,12 @@ Stacking is capped by `max`. Effects are applied to `run.mods` (defaults in pare
 
 ## 7. Modifiers (per sector, 0–2 per sector; second one from sector 6)
 
+Base invalid attempt cost is **2 integrity** (tuned from 1 by the balance sim). `strict` and `hair_trigger` raise it to 3, so they stay harsher than base.
+
 | Id | Min sector | Effect |
 |---|---|---|
 | `surge` | 2 | bit multiplier ×1.5 this sector; combo window −1 s (min 1.5 s) |
-| `strict` | 2 | invalid attempts cost 2 integrity; clear bonus ×1.5 |
+| `strict` | 2 | invalid attempts cost 3 integrity; clear bonus ×1.5 |
 | `tax` | 3 | each valid move costs 1 bit (min 0); clear bonus ×1.5 |
 | `scramble` | 3 | start layout is a random valid distribution across towers; par via solver |
 | `fog` | 4 | visual only: non-top rings are dimmed (flag `sector.fog`) |
@@ -228,7 +230,7 @@ Boss rules (see `BOSSES`):
 | `unassisted` | no undo or hint used | always |
 
 ## 9. Blitz timer
-`timeLimit = (8 + 1.6 × par) × timeMult` seconds. Par-based, so a 7-ring boss gets ~210 s instead of a fixed count-based budget that no bot could meet. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
+`timeLimit = (8 + 1.2 × par) × timeMult` seconds. Par-based, so a 7-ring boss gets ~160 s instead of a fixed count-based budget that no bot could meet. On timeout: `board.timeout()` — integrity −1, board resets to `sector.start`, combo reset, timer restarts; if integrity 0 the run ends.
 
 ## 10. Run flow (what the player sees)
 

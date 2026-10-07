@@ -360,20 +360,20 @@ test('canMove: solved board rejects, bad indices are range errors', () => {
 
 // ------------------------------------------------------------------ tryMove penalties
 
-test('tryMove: invalid attempt costs 1 integrity (2 under strict) and is recorded', () => {
+test('tryMove: invalid attempt costs 2 integrity (3 under strict) and is recorded', () => {
   const { run, board } = handBoard([[ring(3)], [ring(1)], [ring(2)]]);
   const res = board.tryMove(0, 1, 0);
   assert.equal(res.ok, false);
   assert.equal(res.reason, 'size');
-  assert.equal(res.integrityLost, 1);
-  assert.equal(run.integrity, 2);
+  assert.equal(res.integrityLost, 2);
+  assert.equal(run.integrity, 1);
   assert.ok(res.events.includes('invalid'));
   assert.equal(board.stats.invalidMoves, 1);
 
   const strict = handBoard([[ring(3)], [ring(1)], [ring(2)]]);
-  strict.sector.invalidCost = 2;
-  assert.equal(strict.board.tryMove(0, 1, 0).integrityLost, 2);
-  assert.equal(strict.run.integrity, 1);
+  strict.sector.invalidCost = 3;
+  assert.equal(strict.board.tryMove(0, 1, 0).integrityLost, 3);
+  assert.equal(strict.run.integrity, 0);
 });
 
 test('tryMove: aegis forgives the first attempt involving it each sector', () => {
@@ -385,8 +385,8 @@ test('tryMove: aegis forgives the first attempt involving it each sector', () =>
   assert.ok(first.events.includes('aegis-forgive'));
   const second = board.tryMove(0, 1, 1);
   assert.equal(second.forgiven, false);
-  assert.equal(second.integrityLost, 1);
-  assert.equal(run.integrity, 2);
+  assert.equal(second.integrityLost, 2);
+  assert.equal(run.integrity, 1);
 });
 
 test('tryMove: reinforced forgives the first invalid attempt each sector', () => {
@@ -394,7 +394,7 @@ test('tryMove: reinforced forgives the first invalid attempt each sector', () =>
   run.mods.reinforced = 1;
   assert.equal(board.tryMove(0, 1, 0).forgiven, true);
   assert.equal(run.integrity, 3);
-  assert.equal(board.tryMove(0, 1, 1).integrityLost, 1);
+  assert.equal(board.tryMove(0, 1, 1).integrityLost, 2);
 });
 
 test('tryMove: no-op rejects (same tower, empty source) cost nothing', () => {
@@ -619,10 +619,10 @@ test('useHint: spends a hint charge and marks an assist; null when none left', (
 
 // ------------------------------------------------------------------ timer
 
-test('blitz timer: limit is (8 + 1.6 x par) seconds', () => {
+test('blitz timer: limit is (8 + 1.2 x par) seconds', () => {
   const run = createRun({ mode: 'blitz', seed: 2 });
   const sector = sectorConfig(run);
-  assert.equal(sector.timeLimit, Math.round((8 + 1.6 * sector.par) * run.mods.timeMult));
+  assert.equal(sector.timeLimit, Math.round((8 + 1.2 * sector.par) * run.mods.timeMult));
   assert.equal(sectorConfig(createRun({ mode: 'standard', seed: 2 })).timeLimit, null);
 });
 
