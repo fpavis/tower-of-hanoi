@@ -1910,9 +1910,9 @@ scene("reward", () => {
         { draw() { drawHazard(cx - cardW / 2, cardY - cardH / 2, cardW, 10, PAL.danger, PAL.ink, 0.95); drawHazard(cx - cardW / 2, cardY + cardH / 2 - 10, cardW, 10, PAL.danger, PAL.ink, 0.95); } },
       ]);
     }
-    card.add([text(rar.label, { size: 16 }), pos(0, -cardH / 2 + 26), anchor("center"), color(hexC(rar.hex)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
-    card.add([text(def.name, { size: 20, width: cardW - 22, align: "center" }), pos(0, -74), anchor("center"), color(hexC(PAL.white)), outline(3, hexC(PAL.ink)), z(Z.ui + 1)]);
-    card.add([text(def.desc || "", { size: 16, width: cardW - 26, align: "center" }), pos(0, 14), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
+    card.add([text(rar.label, { size: 16 }), pos(0, -cardH / 2 + 34), anchor("center"), color(hexC(rar.hex)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
+    card.add([text(def.name, { size: 20, width: cardW - 22, align: "center" }), pos(0, -58), anchor("center"), color(hexC(PAL.white)), outline(3, hexC(PAL.ink)), z(Z.ui + 1)]);
+    card.add([text(def.desc || "", { size: 16, width: cardW - 26, align: "center" }), pos(0, 18), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
     card.add([text("STACK " + stacks + " / " + (def.max || 1), { size: 16 }), pos(0, cardH / 2 - 26), anchor("center"), color(hexC(stacks > 0 ? rar.hex : PAL.dim)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
     const item = makeItem(card, {
       neon: rar.hex,
@@ -2056,7 +2056,8 @@ scene("end", (args) => {
   txt(victory ? "SIGNAL RESTORED" : "SIGNAL LOST", 450, 52, {
     size: 44, hex: victory ? PAL.gold : PAL.danger, stroke: 5,
   });
-  txt(modeInfo.name + (SESSION.asc ? "  //  ASCENSION" : "") + "  //  " + run.sectorsCleared + " SECTORS CLEARED", 450, 96, {
+  const clearedWord = run.sectorsCleared === 1 ? " SECTOR CLEARED" : " SECTORS CLEARED";
+  txt(modeInfo.name + (SESSION.asc ? "  //  ASCENSION" : "") + "  //  " + run.sectorsCleared + clearedWord, 450, 96, {
     size: 18, hex: PAL.chrome, stroke: 3,
   });
 

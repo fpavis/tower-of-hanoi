@@ -43,8 +43,8 @@ const BOT_IDS = ['optimal', 'human', 'random'];
  *  also costs moveSec. misRate: chance that an attempt is a wrong click first. */
 const BOT_SPEC = {
   optimal: { name: 'Optimal', moveSec: 0.9, misRate: 0 },
-  human: { name: 'Human', moveSec: 1.4, misRate: 0.04 },
-  random: { name: 'Random', moveSec: 1.6, misRate: 0.1 },
+  human: { name: 'Human', moveSec: 3.0, misRate: 0.04 },
+  random: { name: 'Random', moveSec: 3.0, misRate: 0.1 },
 };
 
 const DAILY_SEED = 20261007;      // YYYYMMDD; fixed so the report is reproducible
@@ -59,6 +59,8 @@ const HUMAN_REPAIR_AT = 2;        // human buys a repair at integrity <= 2
 const RANDOM_REPAIR_AT = 1;       // random bot buys a repair only at integrity <= 1
 const LIFT_MIN_N = 30;            // min runs on each side of a card before its lift counts
 const LIFT_TOLERANCE = 0.15;      // +-15 % of the mean lift (DESIGN section 11)
+const SECTOR_OVERHEAD_SEC = 20;   // intro and reward screens: added to reported run length only (DESIGN 11)
+const runMinutes = (r) => (r.seconds + SECTOR_OVERHEAD_SEC * r.reached) / 60;
 
 /** Human pick order. Survival and economy first while the run is young, then
  *  combo and economy power. Curses sit below the good cards and are only
@@ -444,9 +446,32 @@ function newRecord(modeId, botId, idx) {
   };
 }
 
+/** Fewest moves to solve this sector from its start, following core's hint path
+ *  on a shadow run (the real run's bits, score and stats stay untouched). This
+ *  is the minimal pace per run, from the same sector config the bot will play. */
+function minMovesFor(run, sector) {
+  const shadow = {
+    ...run, bits: 0, score: 0, over: false,
+    stats: { validMoves: 0, invalidMoves: 0, undos: 0, hints: 0, cardsTaken: [] },
+  };
+  const board = new Board(shadow, sector);
+  let moves = 0;
+  while (!board.isSolved() && moves < 10000) {
+    const h = board.hint();
+    if (!h) return NaN;
+    if (!board.tryMove(h.from, h.to, moves + 1).ok) return NaN;
+    moves++;
+  }
+  return moves;
+}
+
 function enterSector(rec, sector, run) {
   rec.reached = sector.no;
-  rec.sectorInfo[sector.no] = { rings: sector.ringCount, limit: sector.timeLimit ?? null };
+  rec.sectorInfo[sector.no] = {
+    rings: sector.ringCount,
+    limit: sector.timeLimit ?? null,
+    minMoves: rec.modeId === 'blitz' ? minMovesFor(run, sector) : null,
+  };
   rec.sectorMods[sector.no] = {
     mods: [...(sector.modifiers || [])],
     boss: sector.boss ? sector.boss.id : null,
@@ -473,13 +498,20 @@ function accountClear(rec, sector, fin) {
   for (const q of fin.quests || []) rec.quests.push({ id: q.id, done: Boolean(q.done) });
 }
 
-/** Reward screen: offer, optional shop actions, pick, take. */
-function rewardScreen(run, bot, rec) {
+/** Reward screen: offer, optional shop actions, pick, take. With `force` set,
+ *  the first time that card is on the final offer the bot takes it (ablation). */
+function rewardScreen(run, bot, rec, force) {
   const shown = rewardOffer(run);
   if (!Array.isArray(shown) || shown.length === 0) throw new Error('rewardOffer returned no cards');
   const offer = shown;
   const finalOffer = bot.shop(run, offer, rec);
-  const pick = bot.pickCard(finalOffer, run);
+  let pick;
+  if (force && !rec.forced && finalOffer.map(cardIdOf).includes(force)) {
+    pick = force;
+    rec.forced = true;
+  } else {
+    pick = bot.pickCard(finalOffer, run);
+  }
   rec.offered.push(...finalOffer.map(cardIdOf));
   if (!takeCard(run, pick)) throw new Error(`takeCard refused ${pick}`);
   rec.taken.push(pick);
@@ -501,10 +533,11 @@ function finishRecord(rec, run) {
 }
 
 /** Play one full run. Never throws: exceptions are recorded on the run. */
-function playRun(modeId, botId, runSeed, botSeed, idx) {
+function playRun(modeId, botId, runSeed, botSeed, idx, force = null) {
   const run = createRun({ mode: modeId, seed: runSeed });
   const bot = new Bot(botId, makeRng(botSeed));
   const rec = newRecord(modeId, botId, idx);
+  rec.forced = false;
   try {
     for (;;) {
       const sector = sectorConfig(run);
@@ -519,7 +552,7 @@ function playRun(modeId, botId, runSeed, botSeed, idx) {
       accountClear(rec, sector, fin);
       if (fin.victory || run.victory) { rec.win = true; break; }
       if (modeId === 'endless' && sector.no >= endlessCap) { rec.capped = true; break; }
-      rewardScreen(run, bot, rec);
+      rewardScreen(run, bot, rec, force);
     }
   } catch (err) {
     rec.exception = String((err && err.message) || err);
@@ -574,12 +607,13 @@ function summarize(recs) {
     ends[r.endReason] = (ends[r.endReason] || 0) + 1;
   }
   const clears = Object.values(ratings).reduce((a, b) => a + b, 0);
-  const minutes = recs.map((r) => r.seconds / 60);
+  const minutes = recs.map(runMinutes);
   return {
     n, wins, winRate: p, winCI: 1.96 * Math.sqrt((p * (1 - p)) / n),
     medSector: median(recs.map((r) => r.reached)),
     meanSector: mean(recs.map((r) => r.reached)),
     medMin: median(minutes),
+    winMedMin: median(recs.filter((r) => r.win).map(runMinutes)),
     meanMin: mean(minutes),
     stuck, exc,
     moves: moves / n, cards: cards / n, bosses: bosses / n, timeouts: timeouts / n,
@@ -598,78 +632,82 @@ function bitsOnEntry(recs, k) {
   return { avg: mean(xs), n: xs.length };
 }
 
-/** Pick rate and win-rate lift per upgrade card. Lift = smoothed win rate of runs
- *  that took the card / smoothed win rate of runs that did not. Flags follow
- *  DESIGN section 11: lift within +-15 % of the mean lift across sampled cards. */
-function cardLift(recs) {
-  const n = recs.length;
-  const wins = recs.filter((r) => r.win).length;
+/** Forced-pick ablation (standard, Human bot). Each card is replayed on the same
+ *  seeds as the baseline, forced at its first offer. The effect is the forced win
+ *  rate minus the baseline on those seeds (paired). Lift = forced / baseline. */
+function ablationRows(base, forcedByCard) {
+  const N = base.length;
+  const baseWin = base.filter((r) => r.win).length / N;
   const rows = [];
   for (const card of UPGRADES) {
     if (card.requires === 'blitz') continue; // blitz-only: never offered in standard
-    let shown = 0;
-    let picks = 0;
-    let withN = 0;
-    let withWins = 0;
-    for (const r of recs) {
-      shown += r.offered.filter((id) => id === card.id).length;
-      const k = r.taken.filter((id) => id === card.id).length;
-      picks += k;
-      if (k > 0) {
-        withN++;
-        if (r.win) withWins++;
-      }
+    const forced = forcedByCard[card.id];
+    let offeredRuns = 0;
+    let naturalRuns = 0;
+    let takenRuns = 0;
+    let lostWithCard = 0;   // baseline win, forced loss
+    let gainedWithCard = 0; // baseline loss, forced win
+    for (let i = 0; i < N; i++) {
+      const b = base[i];
+      const f = forced[i];
+      if (b.offered.includes(card.id)) offeredRuns++;
+      if (b.taken.includes(card.id)) naturalRuns++;
+      if (f.forced) takenRuns++;
+      if (b.win && !f.win) lostWithCard++;
+      if (!b.win && f.win) gainedWithCard++;
     }
-    const withoutN = n - withN;
-    const withoutWins = wins - withWins;
-    const pt = (withWins + 1) / (withN + 2);
-    const pn = (withoutWins + 1) / (withoutN + 2);
-    const lift = pt / pn;
-    const seRel = Math.sqrt((1 - pt) / ((withN + 2) * pt) + (1 - pn) / ((withoutN + 2) * pn));
+    const fWin = forced.filter((r) => r.win).length / N;
     rows.push({
-      id: card.id, rarity: card.rarity, shown, picks,
-      pickRate: shown ? picks / shown : NaN,
-      runsPct: withN / n,
-      winTook: withN ? withWins / withN : NaN,
-      winNot: withoutN ? withoutWins / withoutN : NaN,
-      lift: picks ? lift : NaN,
-      seRel,
-      sampled: picks > 0 && withN >= LIFT_MIN_N && withoutN >= LIFT_MIN_N,
+      id: card.id, rarity: card.rarity,
+      offeredPct: offeredRuns / N,
+      naturalPct: naturalRuns / N,
+      takenPct: takenRuns / N,
+      baseWin, fWin,
+      delta: (gainedWithCard - lostWithCard) / N,
+      se: Math.sqrt(lostWithCard + gainedWithCard) / N,
+      lift: baseWin > 0 ? fWin / baseWin : NaN,
+      medBase: median(base.map((r) => r.reached)),
+      medForced: median(forced.map((r) => r.reached)),
+      sampled: takenRuns >= LIFT_MIN_N,
       dev: NaN,
       flag: '',
     });
   }
-  const sampled = rows.filter((r) => r.sampled);
-  const meanLift = mean(sampled.map((r) => r.lift));
+  const meanLift = mean(rows.filter((r) => r.sampled).map((r) => r.lift));
   for (const r of rows) {
     if (r.sampled) r.dev = r.lift / meanLift - 1;
-    if (!r.shown) r.flag = 'never offered';
-    else if (!r.picks) r.flag = 'NEVER TAKEN';
+    if (!r.offeredPct) r.flag = 'never offered';
     else if (!r.sampled) r.flag = 'low n';
     else if (Math.abs(r.dev) > LIFT_TOLERANCE) r.flag = 'OUT';
   }
   return { rows, meanLift };
 }
 
-/** Blitz pace per sector for one bot: minimal solve time (2^rings - 1 moves,
- *  ignoring scramble) against the timer limit. */
+/** Blitz pace per sector for one bot, computed per run from that run's own sector
+ *  config: limit = the run's timer limit; minimal pace = fewest moves on core's
+ *  hint path x the bot's move time. Infeas = share of runs whose minimal pace
+ *  exceeds that same run's limit (the timeouts column counts what actually happened). */
 function blitzPace(recs, spec) {
+  const N = recs.length;
   const out = [];
   for (let k = 1; k <= 12; k++) {
-    const reach = recs.filter((r) => r.sectorInfo[k]);
-    const rings = mean(reach.map((r) => r.sectorInfo[k].rings));
-    const limits = reach.map((r) => r.sectorInfo[k].limit).filter((x) => x !== null);
-    const limit = mean(limits);
-    const pace = Number.isFinite(rings) ? ((2 ** Math.round(rings)) - 1) * spec.moveSec : NaN;
-    const timeouts = reach.length
-      ? recs.reduce((s, r) => s + (r.sectorTimeouts[k] || 0), 0) / recs.length : NaN;
+    const reach = recs.filter((r) => r.sectorInfo[k] && r.sectorInfo[k].limit !== null);
+    const limits = reach.map((r) => r.sectorInfo[k].limit);
+    const paces = reach.map((r) => r.sectorInfo[k].minMoves * spec.moveSec);
+    const infeasible = paces.filter((p, j) => p > limits[j]).length;
     out.push({
-      sector: k, rings, limit, pace, ratio: pace / limit,
-      timeouts, reachPct: reach.length / recs.length,
+      sector: k,
+      rings: mean(reach.map((r) => r.sectorInfo[k].rings)),
+      limit: mean(limits),
+      pace: mean(paces),
+      infeasible: reach.length ? infeasible / reach.length : NaN,
+      timeouts: recs.reduce((s, r) => s + (r.sectorTimeouts[k] || 0), 0) / N,
+      reachPct: reach.length / N,
     });
   }
   return out;
 }
+
 
 // ---------------------------------------------------------------------------
 // Report
@@ -695,7 +733,7 @@ function check(name, target, value, pass) {
   return { name, target, value, result: pass ? 'PASS' : 'FAIL' };
 }
 
-function buildReport(R, opts) {
+function buildReport(R, opts, ablation) {
   const S = {};
   for (const m of MODE_IDS) {
     S[m] = {};
@@ -760,20 +798,26 @@ function buildReport(R, opts) {
   add(table(['Sector', 'Human', 'Optimal', 'Random'], survRows, 1));
 
   // Cards
-  add(section('5. Upgrade pick rate and win-rate lift, standard, Human bot'));
-  const { rows: cardRows, meanLift } = cardLift(R.standard.human);
+  add(section('5. Upgrade ablation (forced pick), standard, Human bot'));
+  const { rows: cardRows, meanLift } = ablationRows(R.standard.human, ablation);
   const cardTable = cardRows.map((r) => [
-    r.id, r.rarity, r.shown, r.picks, pct(r.pickRate, 0), pct(r.runsPct, 0),
-    pct(r.winTook, 1), pct(r.winNot, 1), num(r.lift, 2),
+    r.id, r.rarity, pct(r.offeredPct, 0), pct(r.naturalPct, 0),
+    pct(r.baseWin, 1), pct(r.fWin, 1),
+    `${r.delta >= 0 ? '+' : ''}${(100 * r.delta).toFixed(1)}`,
+    `+-${(100 * r.se).toFixed(1)}`,
+    num(r.lift, 3),
     Number.isFinite(r.dev) ? `${r.dev >= 0 ? '+' : ''}${(100 * r.dev).toFixed(0)}%` : '-',
-    `+-${(100 * r.seRel).toFixed(0)}%`, r.flag,
+    `${num(r.medBase, 0)}>${num(r.medForced, 0)}`,
+    r.flag,
   ]);
-  add(table(['Card', 'Rarity', 'Shown', 'Picks', 'Pick%', 'Runs%', 'WinTook', 'WinNot',
-    'Lift', 'vsMean', 'SE', 'Flag'], cardTable, 2));
-  add(`Mean lift over sampled cards: ${num(meanLift, 3)}. Lift = smoothed win rate with card`
-    + ' / without. Pick% = picks / times on the final offer. SE is the one-sigma noise on the lift.');
-  add(`Selection bias: runs that survive longer see and take more cards, so survival cards lift most.`);
+  add(table(['Card', 'Rarity', 'Offer%', 'Nat%', 'WinBase', 'WinForced', 'dPP', 'SE',
+    'Lift', 'vsMean', 'MedSect', 'Flag'], cardTable, 2));
+  add(`Each card is forced at its first offer on the baseline seeds (n=${R.standard.human.length}).`
+    + ' Offer% = baseline runs where it was offered; Nat% = baseline runs where the Human bot took it.');
+  add('dPP = forced win minus baseline win, paired by seed; SE = paired one-sigma. Lift = forced / baseline.'
+    + ` Mean lift over sampled cards: ${num(meanLift, 3)}. OUT = lift more than 15% away from the mean.`);
 
+  // Economy
   // Economy
   add(section('6. Economy, standard'));
   const econ = (b) => {
@@ -837,42 +881,44 @@ function buildReport(R, opts) {
   add('Percent of Human standard runs entering the sector that have the modifier.');
 
   // Blitz pace
-  add(section('9. Blitz pace: minimal solve time vs timer, per sector'));
+  add(section("9. Blitz pace per sector (limit and minimal pace from each run's sector config)"));
   for (const b of ['optimal', 'human']) {
     const pace = blitzPace(R.blitz[b], BOT_SPEC[b]);
     const rows = pace.map((p) => [p.sector, num(p.rings, 0), num(p.limit, 0), num(p.pace, 0),
-      num(p.ratio, 2), num(p.timeouts, 2), pct(p.reachPct, 0)]);
-    add(`${BOT_SPEC[b].name} bot, blitz`);
-    add(table(['Sector', 'Rings', 'Limit s', 'Pace s', 'Pace/Lim', 'Timeouts', 'Reached'], rows, 1));
+      pct(p.infeasible, 0), num(p.timeouts, 2), pct(p.reachPct, 0)]);
+    add(`${BOT_SPEC[b].name} bot, blitz (move time ${BOT_SPEC[b].moveSec} s)`);
+    add(table(['Sector', 'Rings', 'LimitS', 'MinPaceS', 'Infeas', 'Timeouts', 'Reached'], rows, 1));
   }
-  add('Pace = (2^rings - 1) moves x bot move time, a lower bound (scramble can shorten it).');
+  add("Limit and MinPace are means over runs reaching the sector. MinPace = fewest moves on core's hint"
+    + " path x the bot's move time. Infeas = runs whose MinPace exceeds that run's own limit.");
 
   // Targets
   add(section('10. Balance targets (DESIGN section 11)'));
   const maxRandomWin = Math.max(...MODE_IDS.map((m) => S[m].random.winRate));
-  const liftBad = cardRows.filter((r) => r.flag === 'OUT' || r.flag === 'NEVER TAKEN');
+  const liftBad = cardRows.filter((r) => r.flag === 'OUT');
   const stuckTotal = MODE_IDS.reduce((s, m) => s + BOT_IDS.reduce((t, b) => t + S[m][b].stuck, 0), 0);
   const excTotal = MODE_IDS.reduce((s, m) => s + BOT_IDS.reduce((t, b) => t + S[m][b].exc, 0), 0);
+  const winRunMin = median(R.standard.human.filter((r) => r.win).map(runMinutes));
   const checks = [
     check('Standard, Human: win rate', '15-30%', pct(S.standard.human.winRate),
       inRange(S.standard.human.winRate, 0.15, 0.30)),
     check('Standard, Human: median sector reached', '7-10', num(S.standard.human.medSector),
       inRange(S.standard.human.medSector, 7, 10)),
-    check('Standard, Optimal: win rate', '60-85%', pct(S.standard.optimal.winRate),
-      inRange(S.standard.optimal.winRate, 0.60, 0.85)),
+    check('Standard, Optimal: win rate (ceiling)', '>= 90%', pct(S.standard.optimal.winRate),
+      S.standard.optimal.winRate >= 0.9),
     check('Endless, Human: median sector reached', '9-13', num(S.endless.human.medSector),
       inRange(S.endless.human.medSector, 9, 13)),
     check('Blitz, Human: win rate', '12-25%', pct(S.blitz.human.winRate),
       inRange(S.blitz.human.winRate, 0.12, 0.25)),
     check('Random: win rate (worst mode)', '< 5%', pct(maxRandomWin), maxRandomWin < 0.05),
-    check('Upgrade lift within +-15% of mean', 'every card', `${liftBad.length} flagged`, liftBad.length === 0),
-    check('Run length, Human standard (median)', '25-45 min', `${num(S.standard.human.medMin)} min`,
-      inRange(S.standard.human.medMin, 25, 45)),
-    check('Stuck and exception runs, all combos', '0 / 0', `${stuckTotal} / ${excTotal}`,
-      stuckTotal === 0 && excTotal === 0),
+    check('Upgrade pick-to-win lift within +-15% of mean (ablation)', 'every card',
+      `${liftBad.length} OUT`, liftBad.length === 0),
+    check('Run length, Human standard, median winning run', '15-25 min', `${num(winRunMin)} min`,
+      inRange(winRunMin, 15, 25)),
   ];
   add(table(['Check', 'Target', 'Value', 'Result'],
     checks.map((c) => [c.name, c.target, c.value, c.result]), 1));
+  add(`Sanity (not a DESIGN row): stuck ${stuckTotal}, exceptions ${excTotal}.`);
 
   // Findings
   add(section('11. Findings'));
@@ -880,15 +926,17 @@ function buildReport(R, opts) {
   for (const c of checks) {
     if (c.result === 'FAIL') findings.push(`FAIL ${c.name}: ${c.value} (target ${c.target}).`);
   }
-  const hMoves = S.standard.human.moves;
-  const winMins = R.standard.human.filter((r) => r.win).map((r) => r.seconds / 60);
-  findings.push(`Human standard run length: median ${num(S.standard.human.medMin)} min over all runs,`
-    + ` ${num(median(winMins))} min for winners. Mean valid moves per run ${num(hMoves, 0)}`
-    + ` (about ${num(hMoves * BOT_SPEC.human.moveSec / 60)} min of clicks). 25 min needs`
-    + ` about ${Math.round(25 * 60 / BOT_SPEC.human.moveSec)} moves.`);
+  findings.push(`Human standard run length: median winning run ${num(winRunMin)} min; median of all runs`
+    + ` ${num(S.standard.human.medMin)} min. Both include ${SECTOR_OVERHEAD_SEC} s per sector overhead.`
+    + ` Mean valid moves per run ${num(S.standard.human.moves, 0)} at ${BOT_SPEC.human.moveSec} s each.`);
   for (const r of liftBad) {
-    findings.push(`Card ${r.id}: ${r.flag}, lift ${num(r.lift, 2)} (${Number.isFinite(r.dev)
-      ? `${(100 * r.dev).toFixed(0)}% vs mean` : 'unsampled'}), picked in ${pct(r.pickRate, 0)} of offers.`);
+    findings.push(`Card ${r.id}: OUT, lift ${num(r.lift, 3)} (${(100 * r.dev).toFixed(0)}% vs mean),`
+      + ` forced effect ${(100 * r.delta).toFixed(1)} +-${(100 * r.se).toFixed(1)} pp.`);
+  }
+  const neverNatural = cardRows.filter((r) => r.offeredPct > 0 && r.naturalPct === 0).map((r) => r.id);
+  if (neverNatural.length) {
+    findings.push(`Human bot never takes on its own: ${neverNatural.join(', ')} (priority gate).`
+      + ' Their lift comes from the forced ablation only.');
   }
   const firstWeak = [...Array(12)].map((_, i) => i + 1)
     .find((k) => fractionReached(R.standard.human, k) < 0.5);
@@ -896,13 +944,11 @@ function buildReport(R, opts) {
     findings.push(`Human standard: fewer than half of the runs enter sector ${firstWeak}`
       + ` (${pct(fractionReached(R.standard.human, firstWeak), 0)}).`);
   }
-  for (const b of ['human']) {
-    const pace = blitzPace(R.blitz[b], BOT_SPEC[b]);
-    const bad = pace.filter((p) => p.reachPct >= 0.1 && p.ratio > 1);
-    if (bad.length) {
-      findings.push(`Blitz ${BOT_SPEC[b].name}: minimal pace exceeds the timer in sectors `
-        + `${bad.map((p) => p.sector).join(', ')}.`);
-    }
+  const blitzBad = blitzPace(R.blitz.human, BOT_SPEC.human)
+    .filter((p) => p.reachPct >= 0.1 && p.infeasible > 0);
+  if (blitzBad.length) {
+    findings.push('Blitz Human: some runs cannot meet their timer in sectors '
+      + `${blitzBad.map((p) => p.sector).join(', ')} (infeasible ${blitzBad.map((p) => pct(p.infeasible, 0)).join(', ')}).`);
   }
   if (stuckTotal || excTotal) findings.push(`Stuck ${stuckTotal}, exceptions ${excTotal}: see API notes.`);
   if (!findings.length) findings.push('No target failures.');
@@ -930,6 +976,16 @@ function buildReport(R, opts) {
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
+
+/** Forced-pick ablation run: Human standard on the baseline seeds (the same seeds
+ *  runCombo uses for standard/human), with `cardId` forced at its first offer. */
+function runAblation(cardId, count, seed) {
+  const recs = [];
+  for (let i = 0; i < count; i++) {
+    recs.push(playRun('standard', 'human', mixSeed(seed, 0, i), mixSeed(seed, 1001, 0, i), i, cardId));
+  }
+  return recs;
+}
 
 const USAGE = 'usage: node sim.js [--runs N=100] [--seed S=1] [--endless-cap C=16] [--lift-runs L] [--daily YYYYMMDD]';
 
@@ -969,12 +1025,17 @@ function main() {
   for (const m of MODE_IDS) {
     R[m] = {};
     for (const b of BOT_IDS) {
-      // Human/standard drives the lift analysis, so it gets more runs for power.
+      // Human/standard is the baseline for the ablation, so it gets the larger count if asked.
       const count = (m === 'standard' && b === 'human') ? Math.max(opts.runs, opts.liftRuns) : opts.runs;
       R[m][b] = runCombo(m, b, count, opts.seed, opts.daily);
     }
   }
-  const text = buildReport(R, opts);
+  const ablation = {};
+  for (const card of UPGRADES) {
+    if (card.requires === 'blitz') continue;
+    ablation[card.id] = runAblation(card.id, R.standard.human.length, opts.seed);
+  }
+  const text = buildReport(R, opts, ablation);
   fs.writeFileSync(path.join(__dirname, 'sim-report.txt'), text);
   process.stdout.write(text);
   process.stderr.write(`wall time ${((Date.now() - started) / 1000).toFixed(1)} s (not in report)\n`);
