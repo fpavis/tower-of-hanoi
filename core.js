@@ -898,6 +898,9 @@ const HanoiCore = (function () {
       this.aegisForgiven = false;
       this.reinforcedUsed = false;
       this.finished = false;
+      // Cached optimal path for hint(): { heavyCost, keys, steps }, where keys[i]
+      // is the state before steps[i]. Null until the first hint is computed.
+      this.hintPlan = null;
       this.stats = {
         cost: 0,
         validMoves: 0,
@@ -1104,6 +1107,7 @@ const HanoiCore = (function () {
       this.towers[last.from].push(last.ring);
       this.stacks = last.beforeStacks;
       this.lastMoveT = last.beforeLast;
+      this.hintPlan = null;
       this.run.undoCharges -= 1;
       this.run.stats.undos += 1;
       this.stats.undos += 1;
@@ -1111,14 +1115,42 @@ const HanoiCore = (function () {
       return { ok: true, ring: last.ring };
     }
 
+    idTowers() {
+      return this.towers.map((tower) => tower.map((ring) => ring.id));
+    }
+
     // First step of an optimal path from the current state, or null.
-    // Spends nothing and marks nothing.
+    // Spends nothing and marks nothing. The full path is solved once and kept
+    // in hintPlan. While the board sits on that path, each call pops the steps
+    // before the current state and returns the next one. Any other state
+    // (an off-path move, undo, timeout) triggers a fresh solve.
     hint() {
       if (this.run.over || this.isSolved()) return null;
-      const solved = solveCached(this.towers, this.sector.target, heavyCostFor(this.run));
-      if (!solved.exact || solved.path.length === 0) return null;
-      const step = solved.path[0];
-      return { from: step.from, to: step.to };
+      const heavyCost = heavyCostFor(this.run);
+      const here = towerKey(this.idTowers());
+      const plan = this.hintPlan;
+      if (plan && plan.heavyCost === heavyCost) {
+        const at = plan.keys.indexOf(here);
+        if (at >= 0) {
+          plan.keys.splice(0, at);
+          plan.steps.splice(0, at);
+          return { from: plan.steps[0].from, to: plan.steps[0].to };
+        }
+      }
+      const solved = solveCached(this.towers, this.sector.target, heavyCost);
+      if (!solved.exact || solved.path.length === 0) {
+        this.hintPlan = null;
+        return null;
+      }
+      const steps = solved.path.map((step) => ({ from: step.from, to: step.to }));
+      const keys = [];
+      let ids = this.idTowers();
+      steps.forEach((step) => {
+        keys.push(towerKey(ids));
+        ids = moveIds(ids, step.from, step.to);
+      });
+      this.hintPlan = { heavyCost, keys, steps };
+      return { from: steps[0].from, to: steps[0].to };
     }
 
     // Spends a hint charge and marks an assist. Returns null when no charge
@@ -1147,6 +1179,7 @@ const HanoiCore = (function () {
       this.history = [];
       this.stacks = 0;
       this.lastMoveT = null;
+      this.hintPlan = null;
       this.stats.timeouts += 1;
       const events = [];
       recordLoss(this.run, 1, 'timeout', events);

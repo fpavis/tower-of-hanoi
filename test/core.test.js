@@ -489,6 +489,125 @@ test('hint: each step lies on an optimal path, so par falls by exactly its cost'
   }
 });
 
+// Index of one legal move that is not `avoid`, or null.
+function legalMoveOtherThan(board, avoid) {
+  for (let from = 0; from < 3; from += 1) {
+    for (let to = 0; to < 3; to += 1) {
+      const isAvoid = avoid && avoid.from === from && avoid.to === to;
+      if (!isAvoid && board.canMove(from, to).ok) return { from, to };
+    }
+  }
+  return null;
+}
+
+test('hint cache: steps follow one optimal path, total cost equals a fresh solve', () => {
+  const run = createRun({ mode: 'standard', seed: 31 });
+  let sector = null;
+  for (let i = 0; i < 12; i += 1) sector = sectorConfig(run); // The Stack: 7 rings
+  assert.equal(sector.ringCount, 7);
+  const fresh = parOf(sector.start, sector.target, { heavyCost: 2 });
+  const board = new Board(run, sector);
+
+  let t = 0;
+  let plan = null;
+  while (!board.isSolved()) {
+    const remainingBefore = parOf(board.towers, sector.target);
+    const step = board.hint();
+    assert.ok(step, 'hint available while unsolved');
+    if (plan === null) {
+      plan = board.hintPlan;
+      assert.ok(plan, 'first hint caches the path');
+    }
+    assert.equal(board.hintPlan, plan, 'later hints are served from the same cached path');
+    const res = board.tryMove(step.from, step.to, t);
+    assert.equal(res.ok, true);
+    assert.equal(remainingBefore - parOf(board.towers, sector.target), res.costUnits);
+    t += 1;
+  }
+  assert.equal(board.stats.cost, fresh, 'total cost equals a fresh solve');
+  assert.equal(board.stats.cost, sector.par);
+});
+
+test('hint cache: undo invalidates the cached path and the next hint is still optimal', () => {
+  const run = createRun({ mode: 'standard', seed: 31 });
+  run.undoCharges = 1;
+  let sector = null;
+  for (let i = 0; i < 12; i += 1) sector = sectorConfig(run);
+  const board = new Board(run, sector);
+
+  const first = board.hint();
+  board.tryMove(first.from, first.to, 0);
+  const hinted = board.hint();
+  const plan = board.hintPlan;
+  assert.ok(plan);
+  board.tryMove(hinted.from, hinted.to, 1);
+
+  assert.equal(board.undo().ok, true);
+  assert.equal(board.hintPlan, null, 'undo drops the cached path');
+
+  const remaining = parOf(board.towers, sector.target);
+  const step = board.hint();
+  assert.ok(step);
+  assert.notEqual(board.hintPlan, plan, 'a fresh path was computed');
+  const res = board.tryMove(step.from, step.to, 2);
+  assert.equal(remaining - parOf(board.towers, sector.target), res.costUnits);
+});
+
+test('hint cache: timeout invalidates the cached path', () => {
+  const run = createRun({ mode: 'blitz', seed: 4 });
+  const sector = sectorConfig(run);
+  const board = new Board(run, sector);
+  const step = board.hint();
+  board.tryMove(step.from, step.to, 1);
+  assert.ok(board.hintPlan);
+  board.timeout(5);
+  assert.equal(board.hintPlan, null);
+  // The board is back at the start, so the next hint must be optimal from there.
+  const remaining = parOf(board.towers, sector.target);
+  assert.equal(remaining, sector.par);
+  const next = board.hint();
+  assert.notEqual(board.hintPlan, null);
+  const res = board.tryMove(next.from, next.to, 6);
+  assert.equal(remaining - parOf(board.towers, sector.target), res.costUnits);
+});
+
+test('hint cache: a move off the cached path forces a fresh, still optimal solve', () => {
+  const run = createRun({ mode: 'standard', seed: 8 });
+  let sector = null;
+  for (let i = 0; i < 6; i += 1) sector = sectorConfig(run);
+  const board = new Board(run, sector);
+  const step = board.hint();
+  const plan = board.hintPlan;
+  const off = legalMoveOtherThan(board, step);
+  assert.ok(off);
+  board.tryMove(off.from, off.to, 0);
+  assert.equal(board.hintPlan, plan, 'the stale plan is not touched until the next hint');
+
+  const remaining = parOf(board.towers, sector.target);
+  const next = board.hint();
+  assert.ok(next);
+  assert.notEqual(board.hintPlan, plan, 'a fresh path replaced the stale one');
+  const res = board.tryMove(next.from, next.to, 1);
+  assert.equal(remaining - parOf(board.towers, sector.target), res.costUnits);
+});
+
+test('hint cache: exoskeleton makes heavy moves cost 1 along the cached path', () => {
+  const heavyTop = ring(3, 'heavy');
+  const solveTotal = (exo) => {
+    const { run, board } = handBoard([[heavyTop, ring(2), ring(1)], [], []]);
+    run.mods.heavyFreePar = exo;
+    let t = 0;
+    while (!board.isSolved()) {
+      const step = board.hint();
+      board.tryMove(step.from, step.to, t);
+      t += 1;
+    }
+    return board.stats.cost;
+  };
+  assert.equal(solveTotal(false), 8); // heavy largest moves once at cost 2
+  assert.equal(solveTotal(true), 7);
+});
+
 test('useHint: spends a hint charge and marks an assist; null when none left', () => {
   const { run, board } = handBoard([[ring(3), ring(2), ring(1)], [], []]);
   assert.equal(board.useHint(), null, 'no charges');
