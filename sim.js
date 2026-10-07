@@ -48,7 +48,7 @@ const BOT_SPEC = {
 };
 
 const DAILY_SEED = 20261007;      // YYYYMMDD; fixed so the report is reproducible
-const ENDLESS_CAP = 25;           // endless has no victory; a perfect bot would never die
+let endlessCap = 16;             // endless has no victory; set by --endless-cap (solver cost grows fast past sector 16)
 const CLICK_BUDGET = 4000;        // clicks per sector before the run counts as stuck
 const TIMEOUT_BUDGET = 200;       // blitz timeouts per sector before the run counts as stuck
 const MAX_MISCLICK_STREAK = 6;    // safety cap on consecutive wrong clicks
@@ -175,7 +175,7 @@ function tick(ctx) {
     ctx.timeouts++;
     if (ctx.timeouts > TIMEOUT_BUDGET) return 'budget';
     ctx.t += Math.max(0, left);           // the clock stops at expiry
-    ctx.board.timeout();                  // integrity -1, board back to start, timer restarts
+    ctx.board.timeout(ctx.t);             // integrity -1, board back to start, timer restarts at expiry
     return ctx.run.over ? 'failed' : 'timeout';
   }
   ctx.t += dt;
@@ -235,13 +235,32 @@ function pairs(board, wantLegal) {
   return list;
 }
 
+/** Candidate wrong clicks. Core only penalises size rejections (integrity -1),
+ *  while 'same' and 'empty' clicks are free no-ops. A wrong click that costs
+ *  nothing is not what DESIGN calls a costly misclick, so prefer size
+ *  rejections and fall back to free no-ops only when none exist. */
+function misclickCandidates(board) {
+  const size = [];
+  const free = [];
+  for (let from = 0; from < 3; from++) {
+    for (let to = 0; to < 3; to++) {
+      if (from === to) continue;
+      const c = board.canMove(from, to);
+      if (c.ok) continue;
+      if (c.reason === 'size') size.push({ from, to });
+      else if (c.reason === 'same' || c.reason === 'empty') free.push({ from, to });
+    }
+  }
+  return size.length ? size : free;
+}
+
 /** Wrong-click phase before an intended move (Human and Random). Each attempt
  *  is a wrong click with probability misRate. afterMisclick may spend undo or
  *  hint. Returns 'ok' | 'restart' | 'done'. */
 function misclicks(ctx, rng, afterMisclick) {
   ctx.streak = 0;
   while (ctx.streak < MAX_MISCLICK_STREAK && rng.next() < ctx.spec.misRate) {
-    const bad = pairs(ctx.board, false);
+    const bad = misclickCandidates(ctx.board);
     if (!bad.length) break;
     const pair = bad[Math.floor(rng.next() * bad.length)];
     const k = click(ctx, pair.from, pair.to);
@@ -263,16 +282,20 @@ function misclicks(ctx, rng, afterMisclick) {
 /** Human reaction to misclicks: undo once per sector after a streak of 2 (if it
  *  has charges); one hint only when stuck at 3 consecutive misclicks. */
 function humanAfterMisclick(ctx) {
+  // Core's undo() and useHint() return a failure object or null instead of
+  // throwing, so count only the presses that actually succeed.
   if (ctx.streak === 2 && !ctx.usedUndo && ctx.run.undoCharges > 0 && ctx.valid > 0) {
     ctx.usedUndo = true;
-    ctx.undos++;
     ctx.streak = 0;
-    return actOn(ctx, () => ctx.board.undo());
+    return actOn(ctx, () => {
+      if (ctx.board.undo().ok) ctx.undos++;
+    });
   }
   if (ctx.streak === 3 && !ctx.usedHint && ctx.run.hintsLeft > 0) {
     ctx.usedHint = true;
-    ctx.hints++;
-    return actOn(ctx, () => ctx.board.useHint());
+    return actOn(ctx, () => {
+      if (ctx.board.useHint()) ctx.hints++;
+    });
   }
   return 'ok';
 }
@@ -405,7 +428,10 @@ function newRecord(modeId, botId, idx) {
     reached: 0, win: false, capped: false, stuck: null, exception: null, endReason: null,
     sectorsCleared: 0, score: 0, seconds: 0,
     moves: 0, invalid: 0, timeouts: 0, undos: 0, hints: 0,
-    moveBits: 0, bitsEarned: 0, interest: 0, bosses: 0,
+    // Bits: bitsEarned = core's clear-time bits (move bits of cleared sectors
+    // are included there), interest is separate, unclearedBits = move bits of
+    // sectors that were not cleared. totalBits = all bits earned.
+    bitsEarned: 0, interest: 0, unclearedBits: 0, totalBits: 0, bosses: 0,
     ratings: { S: 0, A: 0, B: 0, C: 0 },
     quests: [],           // { id, done } per evaluated quest
     taken: [],            // card ids picked, in order
@@ -435,13 +461,13 @@ function accountPlay(rec, sector, out) {
   rec.undos += out.undos;
   rec.hints += out.hints;
   rec.seconds += out.t;
-  rec.moveBits += out.bits;
+  if (out.outcome !== 'solved') rec.unclearedBits += out.bits;
   rec.sectorTimeouts[sector.no] = (rec.sectorTimeouts[sector.no] || 0) + out.timeouts;
 }
 
 function accountClear(rec, sector, fin) {
-  rec.bitsEarned += fin.bitsEarned || 0;
-  rec.interest += fin.interest || 0;
+  rec.bitsEarned += fin.bitsEarned || 0;   // already includes this sector's move bits
+  rec.interest += fin.interest || 0;       // interest sits in run.bits, not bitsEarned
   rec.ratings[fin.rating] = (rec.ratings[fin.rating] || 0) + 1;
   if (sector.isBoss) rec.bosses++;
   for (const q of fin.quests || []) rec.quests.push({ id: q.id, done: Boolean(q.done) });
@@ -450,7 +476,8 @@ function accountClear(rec, sector, fin) {
 /** Reward screen: offer, optional shop actions, pick, take. */
 function rewardScreen(run, bot, rec) {
   const shown = rewardOffer(run);
-  const offer = Array.isArray(shown) ? shown : run.offer;
+  if (!Array.isArray(shown) || shown.length === 0) throw new Error('rewardOffer returned no cards');
+  const offer = shown;
   const finalOffer = bot.shop(run, offer, rec);
   const pick = bot.pickCard(finalOffer, run);
   rec.offered.push(...finalOffer.map(cardIdOf));
@@ -459,6 +486,7 @@ function rewardScreen(run, bot, rec) {
 }
 
 function finishRecord(rec, run) {
+  rec.totalBits = rec.bitsEarned + rec.interest + rec.unclearedBits;
   rec.sectorsCleared = run.sectorsCleared || 0;
   rec.score = run.score || 0;
   rec.endReason = rec.win ? 'victory'
@@ -487,9 +515,10 @@ function playRun(modeId, botId, runSeed, botSeed, idx) {
       if (out.outcome === 'stuck') { rec.stuck = out.why || 'stuck'; break; }
       if (out.outcome === 'failed') break;
       const fin = finishSector(run, board, out.t);
+      if (!fin) throw new Error('finishSector returned null for a solved board');
       accountClear(rec, sector, fin);
       if (fin.victory || run.victory) { rec.win = true; break; }
-      if (modeId === 'endless' && sector.no >= ENDLESS_CAP) { rec.capped = true; break; }
+      if (modeId === 'endless' && sector.no >= endlessCap) { rec.capped = true; break; }
       rewardScreen(run, bot, rec);
     }
   } catch (err) {
@@ -681,7 +710,7 @@ function buildReport(R, opts) {
     + ` (lift power) | daily date ${opts.daily}`);
   add('Bots: ' + BOT_IDS.map((b) => `${BOT_SPEC[b].name} ${BOT_SPEC[b].moveSec} s/move`
     + ` ${(100 * BOT_SPEC[b].misRate).toFixed(0)}% misclicks`).join(' | '));
-  add(`Endless stops at sector ${ENDLESS_CAP} (counted as reached). Sector = last sector entered.`);
+  add(`Endless stops at sector ${endlessCap} (counted as reached). Sector = last sector entered.`);
   add('Wrong clicks, undo and hint presses cost one move-time. Daily uses one dungeon for all runs.');
 
   // Outcomes
@@ -754,7 +783,7 @@ function buildReport(R, opts) {
       b4: at(4), b8: at(8), b12: at(12),
       rerolls: mean(recs.map((r) => r.rerolls)),
       repairs: mean(recs.map((r) => r.repairs)),
-      earned: mean(recs.map((r) => r.moveBits + r.bitsEarned)),
+      earned: mean(recs.map((r) => r.totalBits)),
     };
   };
   const eH = econ('human');
@@ -770,7 +799,7 @@ function buildReport(R, opts) {
     ['Avg bits earned per run', num(eH.earned, 0), num(eO.earned, 0), num(eR.earned, 0)],
   ];
   add(table(['Metric', 'Human', 'Optimal', 'Random'], econRows, 1));
-  add('Bits earned = move bits + sector-clear bits (interest excluded: see API notes).');
+  add('Bits earned = move bits + clear bonus + quests + interest (shop spending excluded).');
 
   // Quests
   add(section('7. Quest completion per quest id, standard'));
@@ -902,10 +931,10 @@ function buildReport(R, opts) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-const USAGE = 'usage: node sim.js [--runs N] [--seed S] [--lift-runs L] [--daily YYYYMMDD]';
+const USAGE = 'usage: node sim.js [--runs N=100] [--seed S=1] [--endless-cap C=16] [--lift-runs L] [--daily YYYYMMDD]';
 
 function parseArgs(argv) {
-  const opts = { runs: 300, seed: 1, liftRuns: 3000, daily: DAILY_SEED };
+  const opts = { runs: 100, seed: 1, liftRuns: 0, daily: DAILY_SEED, endlessCap: 16 };
   const toInt = (flag, v, min) => {
     const n = Number(v);
     if (!Number.isInteger(n) || n < min) throw new Error(`${flag} expects an integer >= ${min}`);
@@ -922,6 +951,7 @@ function parseArgs(argv) {
     else if (flag === '--seed') opts.seed = toInt(flag, next(), 0);
     else if (flag === '--lift-runs') opts.liftRuns = toInt(flag, next(), 1);
     else if (flag === '--daily') opts.daily = toInt(flag, next(), 1);
+    else if (flag === '--endless-cap') opts.endlessCap = toInt(flag, next(), 1);
     else if (flag === '--help' || flag === '-h') {
       console.log(USAGE);
       process.exit(0);
@@ -932,6 +962,7 @@ function parseArgs(argv) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+  endlessCap = opts.endlessCap;
   checkPriorityLists();
   const started = Date.now();
   const R = {};

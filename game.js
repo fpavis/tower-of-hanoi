@@ -400,17 +400,18 @@ function drawRingAt(cx, cy, size, n, type, o = {}) {
     dashedRect(x0, y0, w, h, 6, 4, PAL.white, 0.85 * op);
   } else if (type === "heavy") {
     drawRect({ pos: center, width: w, height: h, anchor: "center", radius: 5, color: hexC(PAL.steel), opacity: op, outline: { width: 2, color: hexC(PAL.chrome) } });
-    drawRect({ pos: vec2(cx, cy - h * 0.27), width: w - 12, height: 2, color: hexC(PAL.chrome), opacity: 0.9 * op });
-    drawRect({ pos: vec2(cx, cy + h * 0.27), width: w - 12, height: 2, color: hexC(PAL.chrome), opacity: 0.9 * op });
+    drawRect({ pos: vec2(cx, cy - h * 0.27), width: w - 12, height: 2, anchor: "center", color: hexC(PAL.chrome), opacity: 0.9 * op });
+    drawRect({ pos: vec2(cx, cy + h * 0.27), width: w - 12, height: 2, anchor: "center", color: hexC(PAL.chrome), opacity: 0.9 * op });
   } else if (type === "aegis") {
     drawRect({ pos: center, width: w, height: h, anchor: "center", radius: 5, color: hexC(PAL.amber), opacity: op });
     drawHazard(x0, y0, w, h, PAL.amber, PAL.ink, 0.85 * op);
   } else {
     drawRect({ pos: center, width: w, height: h, anchor: "center", radius: 6, color: hexC(hex), opacity: op });
-    drawRect({ pos: vec2(cx, y0 + 3), width: w - 10, height: 2, color: hexC(PAL.white), opacity: 0.4 * op });
-    drawRect({ pos: vec2(cx, y0 + h - 3), width: w - 10, height: 2, color: hexC(PAL.ink), opacity: 0.35 * op });
+    drawRect({ pos: vec2(cx, y0 + 3), width: w - 10, height: 2, anchor: "center", color: hexC(PAL.white), opacity: 0.4 * op });
+    drawRect({ pos: vec2(cx, y0 + h - 3), width: w - 10, height: 2, anchor: "center", color: hexC(PAL.ink), opacity: 0.35 * op });
   }
 
+  if (o.chip === false) return;
   drawRect({ pos: center, width: 24, height: 15, anchor: "center", radius: 4, color: hexC(PAL.ink), opacity: 0.8 * op });
   drawText({ text: String(size), size: 16, pos: center, anchor: "center", color: hexC(PAL.white), opacity: op });
 }
@@ -589,10 +590,10 @@ function drawSun(cx, H, R) {
   }
 }
 
-function drawSynth(t) {
+function drawSynth(t, sun) {
   const H = HORIZON_Y;
   drawRect({ pos: vec2(0, H), width: LOGIC_W, height: LOGIC_H - H, color: hexC("#120a26"), opacity: 1 });
-  drawSun(450, H, 92);
+  if (sun) drawSun(450, H, 92);
   drawRect({ pos: vec2(0, H - 14), width: LOGIC_W, height: 14, color: hexC(PAL.magenta), opacity: 0.07 });
   drawRect({ pos: vec2(0, H - 1), width: LOGIC_W, height: 2, color: hexC(PAL.magenta), opacity: 0.95 });
   const f = (t * 0.55) % 1;
@@ -639,17 +640,38 @@ function addDisk() {
   ]);
 }
 
+// opts.sun: only the title carries the striped sun; text-heavy screens keep the grid alone.
 function addSynth(opts = {}) {
   const sky = { t: rand(0, 4) };
+  const sun = !!opts.sun;
   add([
     pos(0, 0),
     z(Z.bg),
     {
       update() { sky.t += dt(); },
-      draw() { drawSynth(sky.t); },
+      draw() { drawSynth(sky.t, sun); },
     },
   ]);
   for (let i = 0; i < (opts.disks ?? 0); i++) addDisk();
+}
+
+// A short row of rings used as a mode icon: sizes step up left to right.
+function drawRingRow(cx, cy, count) {
+  const gap = 5;
+  let total = 0;
+  const widths = [];
+  for (let s = 1; s <= count; s++) {
+    const w = 12 + s * 5;
+    widths.push(w);
+    total += w;
+  }
+  total += gap * (count - 1);
+  let x = cx - total / 2;
+  for (let s = 1; s <= count; s++) {
+    const w = widths[s - 1];
+    drawRingAt(x + w / 2, cy, s, count, "standard", { w, h: 12, chip: false, opacity: 0.95 });
+    x += w + gap;
+  }
 }
 
 // Quiet dot-grid backdrop for the play, reward and clear screens.
@@ -864,7 +886,7 @@ kaplay({
 scene("title", () => {
   navBusy = false;
   ESC.until = -1;
-  addSynth({ disks: 8 });
+  addSynth({ disks: 8, sun: true });
   addOverlay();
 
   txt("NEON RELAY", 450, 40, { size: 18, hex: PAL.magenta, stroke: 3 });
@@ -986,7 +1008,12 @@ scene("modes", () => {
       "menu-item",
     ]);
     body.add([text(info.name, { size: 26 }), pos(0, -cardH / 2 + 36), anchor("center"), color(hexC(info.neon)), outline(3, hexC(PAL.ink)), z(Z.ui + 1)]);
-    body.add([text(info.blurb, { size: 16, width: cardW - 30, align: "center" }), pos(0, -20), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
+    body.add([text(info.blurb, { size: 16, width: cardW - 30, align: "center" }), pos(0, -4), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
+    const iconCount = { standard: 3, blitz: 3, endless: 5, daily: 4 }[id] || 3;
+    add([
+      pos(0, 0), z(Z.ui + 1),
+      { draw() { drawRingRow(body.pos.x, body.pos.y - cardH / 2 + 72, iconCount); } },
+    ]);
     body.add([rect(cardW - 40, 1), pos(0, cardH / 2 - 70), anchor("center"), color(hexC(info.neon)), opacity(0.5), z(Z.ui + 1)]);
     const bestA = body.add([text("", { size: 18 }), pos(0, cardH / 2 - 50), anchor("center"), color(hexC(PAL.white)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
     const bestB = body.add([text("", { size: 16 }), pos(0, cardH / 2 - 24), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
@@ -1043,7 +1070,7 @@ scene("codex", () => {
 
   let tab = 0;
   let page = 0;
-  const PER_PAGE = 6;
+  const PER_PAGE = 5;
   const tabNames = ["RINGS", "UPGRADES", "RECORDS"];
   const tabHex = [PAL.cyan, PAL.amber, PAL.lime];
   const upgrades = HanoiCore.UPGRADES || [];
@@ -1098,17 +1125,17 @@ scene("codex", () => {
       txt("SEEN " + seen + " / " + upgrades.length + "   PAGE " + (page + 1) + " / " + (maxPage() + 1), 884, 150, { anchor: "right", align: "right", size: 16, hex: PAL.chrome, stroke: 2, ...T });
       const slice = upgrades.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
       slice.forEach((u, i) => {
-        const y = 170 + i * 46;
+        const y = 170 + i * 60;
         const known = !!STORE.seen[u.id];
         const rar = RARITY[u.rarity] || RARITY.common;
-        const pillX = 92;
+        const pillX = 112;
         add([
           pos(pillX, y), anchor("center"), z(Z.ui), "codex-content",
-          rect(116, 20, { radius: 10 }), color(hexC(rar.hex)),
+          rect(110, 20, { radius: 10 }), color(hexC(rar.hex)),
         ]);
         txt(rar.label, pillX, y, { size: 16, hex: PAL.ink, stroke: 0, z: Z.ui + 1, ...T });
-        txt(known ? u.name : "???", 170, y - 10, { anchor: "left", align: "left", size: 18, hex: known ? rar.hex : PAL.dim, stroke: 2, ...T });
-        txt(known ? (u.desc || "") : "Unseen protocol. Take it to reveal.", 170, y + 12, { anchor: "left", align: "left", size: 16, width: 700, hex: PAL.chrome, stroke: 2, ...T });
+        txt(known ? u.name : "???", 200, y - 12, { anchor: "left", align: "left", size: 18, hex: known ? rar.hex : PAL.chrome, stroke: 2, ...T });
+        txt(known ? (u.desc || "") : "Unseen protocol. Take it to reveal.", 200, y + 12, { anchor: "left", align: "left", size: 16, width: 660, hex: PAL.chrome, stroke: 2, ...T });
       });
     } else {
       const rows = [
@@ -1137,6 +1164,11 @@ scene("intro", () => {
   const run = SESSION.run;
   if (!run) { go("title"); return; }
   const sector = HanoiCore.sectorConfig(run);
+  if (!sector) {
+    // Past the last sector (or the run is over): nothing left to play.
+    navigate("end", { victory: !!run.victory });
+    return;
+  }
   SESSION.sector = sector;
   const boss = !!sector.isBoss;
   const accent = boss ? PAL.magenta : PAL.cyan;
@@ -1148,76 +1180,102 @@ scene("intro", () => {
     drawHazardBand(0, LOGIC_H - 10, LOGIC_W, 10, accent);
   }
 
-  const header = txt("SECTOR " + pad2(sector.no), 450, 46, { size: 46, hex: accent, stroke: 5, opacity: 0 });
+  const header = txt("SECTOR " + pad2(sector.no), 450, 44, { size: 46, hex: accent, stroke: 5, opacity: 0 });
   const sub = boss
-    ? txt("BOSS // " + String(sector.boss.name || "").toUpperCase() + "   " + (sector.boss.rule || ""), 450, 84, { size: 16, hex: PAL.white, stroke: 2, width: 820, opacity: 0 })
-    : txt("CLEAR THE TOWER. KEEP YOUR INTEGRITY.", 450, 84, { size: 16, hex: PAL.chrome, stroke: 2, opacity: 0 });
+    ? txt("BOSS // " + String(sector.boss.name || "").toUpperCase() + "   " + (sector.boss.rule || ""), 450, 82, { size: 16, hex: PAL.white, stroke: 2, width: 820, opacity: 0 })
+    : txt("CLEAR THE TOWER. KEEP YOUR INTEGRITY.", 450, 82, { size: 16, hex: PAL.chrome, stroke: 2, opacity: 0 });
   tw(0, 1, 0.4, (v) => { if (header.exists()) header.opacity = v; sub.opacity = v; }, easings.easeOutCubic);
 
-  // Left column: the board at a glance
+  // LEFT: the numbers, then the start layout with the target node marked
   const leftX = 60;
-  const rows = [];
-  rows.push(["RINGS", String(sector.rings.length)]);
-  rows.push(["TARGET", "NODE " + "ABC"[sector.target] ]);
-  rows.push(["PAR", (sector.par ?? "?") + " MOVES"]);
+  const rows = [["RINGS", String(sector.rings.length)], ["TARGET", "NODE " + "ABC"[sector.target]], ["PAR", (sector.par ?? "?") + " MOVES"]];
   if (sector.timeLimit) rows.push(["TIME", Math.round(sector.timeLimit) + " S"]);
   rows.forEach(([k, v], i) => {
-    const y = 136 + i * 34;
+    const y = 128 + i * 30;
     txt(k, leftX, y, { anchor: "left", align: "left", size: 18, hex: PAL.dim, stroke: 2 });
-    txt(v, leftX + 150, y, { anchor: "left", align: "left", size: 24, hex: PAL.white, stroke: 3 });
+    txt(v, leftX + 130, y, { anchor: "left", align: "left", size: 22, hex: PAL.white, stroke: 3 });
   });
+  addSectorPreview(sector, leftX, 282, 370, 116);
 
-  // Special ring legend: each present type drawn with its own treatment
-  const legendY = 280;
-  const legend = [];
-  ["gilded", "ghost", "heavy", "aegis"].forEach((k) => {
-    const count = sector[k + "Count"] || 0;
-    if (count > 0) legend.push([k, count]);
-  });
-  legend.forEach(([k, count], i) => {
-    const y = legendY + i * 24;
-    const hex = k === "gilded" ? PAL.gold : k === "aegis" ? PAL.amber : k === "heavy" ? PAL.chrome : PAL.white;
-    add([pos(0, 0), z(Z.ui), { draw() { drawRingAt(leftX + 56, y + 10, 4, 9, k, { w: 58, h: 16 }); } }]);
-    const name = (HanoiCore.RING_TYPES[k] && HanoiCore.RING_TYPES[k].name) || titleOf(k);
-    txt(name.toUpperCase() + "  x" + count, leftX + 110, y + 10, { anchor: "left", align: "left", size: 18, hex, stroke: 2 });
-  });
-  if (!legend.length) txt("STANDARD RINGS ONLY", leftX, legendY + 10, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+  // RIGHT: quest card
+  const qx = 470;
+  add([rect(370, 136, { radius: 12 }), pos(qx, 128), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.92), outline(2, hexC(accent)), z(Z.ui)]);
+  txt("QUEST", qx + 22, 146, { anchor: "left", align: "left", size: 18, hex: PAL.dim, stroke: 2 });
+  const quests = [sector.quest, sector.bossQuest].filter(Boolean);
+  const quest = quests[0] || { name: "Clear the tower", desc: "", reward: 0 };
+  txt(quest.name, qx + 22, 170, { anchor: "left", align: "left", size: 24, hex: accent, stroke: 3, width: 330 });
+  txt(quest.desc || "", qx + 22, 198, { anchor: "topleft", align: "left", size: 16, width: 330, hex: PAL.white, stroke: 2 });
+  const rewardSum = quests.reduce((a, q) => a + (q.reward || 0), 0);
+  txt("REWARD  +" + rewardSum + " BITS" + (quests.length > 1 ? "   (2 QUESTS)" : ""), qx + 22, 240, { anchor: "left", align: "left", size: 18, hex: PAL.lime, stroke: 2 });
+  if ((run.upgrades && run.upgrades.forecast) > 0) {
+    txt("FORECAST MATCHED", qx + 348, 146, { anchor: "right", align: "right", size: 16, hex: PAL.amber, stroke: 2 });
+  }
 
-  // Modifier chips (max two per sector)
-  const modY = 392;
+  // RIGHT: modifier chips and the special ring legend
+  const modY = 286;
   const mods = sector.modifiers || [];
   mods.forEach((id, i) => {
     const def = (HanoiCore.MODIFIERS || []).find((m) => m.id === id);
     const hex = MODIFIER_HEX[id] || PAL.cyan;
     const chipW = 150;
-    const cx = leftX + chipW / 2 + i * (chipW + 12);
+    const cx = qx + chipW / 2 + i * (chipW + 12);
     add([rect(chipW, 24, { radius: 12 }), pos(cx, modY), anchor("center"), color(hexC(PAL.ink)), outline(2, hexC(hex)), z(Z.ui)]);
     txt((def ? def.name : titleOf(id)).toUpperCase(), cx, modY, { size: 16, hex, stroke: 2 });
   });
-  if (!mods.length) txt("NO MODIFIERS", leftX + 4, modY, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
-  if (sector.fog) txt("FOG: NON-TOP RINGS DIMMED", leftX, modY + 30, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2 });
+  if (!mods.length) txt("NO MODIFIERS", qx, modY, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+  if (sector.fog) txt("FOG: NON-TOP RINGS DIMMED", qx, modY + 26, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2 });
 
-  // Quest panel
-  const qx = 470;
-  const qPanel = add([rect(370, 236, { radius: 12 }), pos(qx, 128), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.9), outline(2, hexC(accent)), z(Z.ui)]);
-  txt("QUEST", qx + 22, 148, { anchor: "left", align: "left", size: 18, hex: PAL.dim, stroke: 2 });
-  const quest = sector.quest || { name: "Clear the tower", desc: "", reward: 0 };
-  txt(quest.name, qx + 22, 180, { anchor: "left", align: "left", size: 26, hex: accent, stroke: 3, width: 330 });
-  txt(quest.desc || "", qx + 22, 214, { anchor: "topleft", align: "left", size: 16, width: 330, hex: PAL.white, stroke: 2 });
-  txt("REWARD  +" + (quest.reward ?? 0) + " BITS", qx + 22, 330, { anchor: "left", align: "left", size: 18, hex: PAL.lime, stroke: 2 });
-  if ((run.upgrades && run.upgrades.forecast) > 0) {
-    txt("FORECAST MATCHED", qx + 348, 148, { anchor: "right", align: "right", size: 16, hex: PAL.amber, stroke: 2 });
-  }
+  const legend = [];
+  ["gilded", "ghost", "heavy", "aegis"].forEach((k) => {
+    const count = sector[k + "Count"] || 0;
+    if (count > 0) legend.push([k, count]);
+  });
+  if (!legend.length) txt("STANDARD RINGS ONLY", qx, 336, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+  legend.forEach(([k, count], i) => {
+    const y = 338 + i * 22;
+    const hex = k === "gilded" ? PAL.gold : k === "aegis" ? PAL.amber : k === "heavy" ? PAL.chrome : PAL.white;
+    add([pos(0, 0), z(Z.ui), { draw() { drawRingAt(qx + 30, y, 4, 9, k, { w: 58, h: 16, chip: false }); } }]);
+    const name = (HanoiCore.RING_TYPES[k] && HanoiCore.RING_TYPES[k].name) || titleOf(k);
+    txt(name.toUpperCase() + "  x" + count, qx + 66, y, { anchor: "left", align: "left", size: 18, hex, stroke: 2 });
+  });
 
   const engage = menuButton({
-    x: 450, y: 436, w: 280, h: 44, label: boss ? "ENGAGE BOSS" : "ENGAGE", neon: accent, size: 22,
+    x: 450, y: 444, w: 280, h: 42, label: boss ? "ENGAGE BOSS" : "ENGAGE", neon: accent, size: 22,
     onPick: () => { sfxClick(); navigate("play"); },
   });
   bindMenu([engage]);
   onKeyPress("escape", escPress);
   addEscBanner(112);
-  txt("ENTER ENGAGE    ESC TWICE TO ABORT", 450, 472, { size: 16, hex: PAL.dim, stroke: 2 });
+  txt("ENTER ENGAGE    ESC TWICE TO ABORT", 450, 480, { size: 16, hex: PAL.dim, stroke: 2 });
 });
+
+// Mini view of the start layout: three tubes, rings at their real sizes, the target tagged.
+function addSectorPreview(sector, x0, top, w, h) {
+  const bottom = top + h;
+  const spacing = w / 3;
+  const n = sector.rings.length;
+  add([
+    pos(0, 0),
+    z(Z.ui),
+    {
+      draw() {
+        for (let t = 0; t < 3; t++) {
+          const cx = x0 + spacing * (t + 0.5);
+          const isTarget = t === sector.target;
+          const hex = isTarget ? PAL.magenta : PAL.cyan;
+          drawRect({ pos: vec2(cx, (top + bottom - 22) / 2), width: 4, height: bottom - top - 22, anchor: "center", color: hexC(hex), opacity: isTarget ? 0.9 : 0.5 });
+          drawRect({ pos: vec2(cx, bottom - 8), width: 96, height: 8, anchor: "center", radius: 3, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
+          drawText({ text: "NODE " + "ABC"[t], size: 16, pos: vec2(cx, bottom + 10), anchor: "center", color: hexC(isTarget ? PAL.magenta : PAL.chrome) });
+          if (isTarget) drawPill(cx, top - 4, "TARGET", PAL.magenta, 92);
+          const tower = sector.start[t] || [];
+          tower.forEach((r, i) => {
+            drawRingAt(cx, bottom - 18 - i * 12, r.size, n, r.type, { w: ringWidth(r.size) * 0.55, h: 10, chip: false });
+          });
+        }
+      },
+    },
+  ]);
+}
 
 function drawHazardBand(x, y, w, h, hex) {
   add([
@@ -1490,7 +1548,7 @@ scene("play", () => {
 
   function doTimeout() {
     const before = run.integrity;
-    board.timeout();
+    board.timeout(nowT());
     ps.sel = -1;
     ps.timeoutCool = time() + 0.6;
     syncViews();
@@ -1548,7 +1606,7 @@ scene("play", () => {
     drawRect({ pos: vec2(x, cy), width: 3, height: h - 6, anchor: "center", radius: 2, color: hexC(hex), opacity: 0.95 });
     drawCircle({ pos: vec2(x, RELAY_TOP - 3), radius: 6, color: hexC(hex), opacity: 0.6 * glow });
     if (isTarget) {
-      drawCircle({ pos: vec2(x, BASE_Y + 7), radius: 96 + pulse * 10, color: hexC(PAL.magenta), opacity: 0.05 + 0.04 * pulse });
+      drawCircle({ pos: vec2(x, BASE_Y + 7), radius: 58 + pulse * 6, color: hexC(PAL.magenta), opacity: 0.03 + 0.03 * pulse });
     }
     drawRect({ pos: vec2(x, BASE_Y + 7), width: 176, height: 14, anchor: "center", radius: 4, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
     drawText({
@@ -1651,20 +1709,23 @@ scene("play", () => {
           color: hexC(PAL.chrome), outline: { width: 2, color: hexC(PAL.ink) },
         });
 
-        // bottom strip: quest and controls
-        const quest = sector.quest;
-        let qDone = null;
-        try {
-          const def = (HanoiCore.QUESTS || []).find((q) => q.id === quest.id);
-          if (def) qDone = !!def.check(board.stats, sector, run);
-        } catch (e) {
-          qDone = null;
-        }
-        // Kaplay reads square brackets as style tags, so the status uses plain words.
-        const tag = qDone === null ? "" : qDone ? "   -   DONE" : "   -   OPEN";
+        // bottom strip: quest status (one per quest; bosses carry two) and controls
+        const questList = [sector.quest, sector.bossQuest].filter(Boolean);
+        const parts = questList.map((q) => {
+          let done = null;
+          try {
+            const def = (HanoiCore.QUESTS || []).find((d) => d.id === q.id);
+            if (def) done = !!def.check(board.stats, sector, run);
+          } catch (e) {
+            done = null;
+          }
+          // Kaplay reads square brackets as style tags, so the status uses plain words.
+          return q.name + (done === null ? "" : done ? " - DONE" : " - OPEN");
+        });
+        const allDone = questList.length > 0 && questList.every((q, i) => parts[i].endsWith("DONE"));
         drawText({
-          text: "QUEST  " + (quest ? quest.name : "") + tag, size: 16, pos: vec2(16, LOGIC_H - 22), anchor: "topleft",
-          color: hexC(qDone ? PAL.lime : PAL.white), outline: { width: 2, color: hexC(PAL.ink) },
+          text: "QUEST  " + parts.join("   /   "), size: 16, pos: vec2(16, LOGIC_H - 22), anchor: "topleft",
+          color: hexC(allDone ? PAL.lime : PAL.white), outline: { width: 2, color: hexC(PAL.ink) },
         });
         drawText({
           text: "1 2 3 RELAY   U UNDO x" + (run.undoCharges || 0) + "   H HINT x" + (run.hintsLeft || 0) + "   ESC ABORT",
@@ -1907,13 +1968,19 @@ scene("reward", () => {
     const fy = 370;
     add([rect(220, 96, { radius: 10 }), pos(bx, fy), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.9), outline(2, hexC(PAL.amber)), z(Z.ui)]);
     txt("FORECAST  SECTOR " + pad2((run.sectorNo || 0) + 1), bx + 12, fy + 12, { anchor: "left", align: "left", size: 16, hex: PAL.amber, stroke: 2 });
-    const mods = (plan.modifiers || []).map((m) => (typeof m === "string" ? titleOf(m) : m.name || "")).join(", ");
+    // Core plan shape: { no, modifierIds, ringTypes, questIds }
+    const modNames = (plan.modifierIds || []).map((id) => {
+      const def = (HanoiCore.MODIFIERS || []).find((m) => m.id === id);
+      return def ? def.name : titleOf(id);
+    });
+    const mods = modNames.join(", ");
     txt(mods || "No modifiers", bx + 12, fy + 36, { anchor: "left", align: "left", size: 16, hex: PAL.white, stroke: 2, width: 200 });
-    const qn = plan.quest ? plan.quest.name : "";
+    const qDef = (plan.questIds || []).length ? (HanoiCore.QUESTS || []).find((q) => q.id === plan.questIds[0]) : null;
+    const qn = qDef ? qDef.name : "";
     txt(qn ? "Quest: " + qn : "", bx + 12, fy + 70, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2, width: 200 });
   }
 
-  txt("1 2 3 PICK    R REROLL    P REPAIR    ESC TWICE TO ABORT", 880, 478, { anchor: "right", align: "right", size: 16, hex: PAL.dim, stroke: 2 });
+  txt("1 2 3 PICK    R REROLL    P REPAIR    ESC ABORT", 884, 22, { anchor: "right", align: "right", size: 16, hex: PAL.dim, stroke: 2 });
   onKeyPress("1", () => takeOffer(ids[0]));
   onKeyPress("2", () => takeOffer(ids[1]));
   onKeyPress("3", () => takeOffer(ids[2]));
@@ -1980,7 +2047,7 @@ scene("end", (args) => {
   const key = recordKey(SESSION.mode, SESSION.asc, SESSION.seed);
   const best = bestOf(key) || { score: 0, sectors: 0 };
 
-  addSynth({ disks: 5 });
+  addSynth({ disks: 5, sun: victory });
   addOverlay();
   if (!victory) GLITCH.level = 0.8;
   if (victory) sfxArpeggio(true);
@@ -2030,10 +2097,12 @@ scene("end", (args) => {
   onKeyPress("escape", () => navigate("title"));
 });
 
+// Core causes: 'invalid' (rejected moves) and 'timeout' (blitz clock).
 function humanReason(reason) {
-  if (!reason) return "INTEGRITY DEPLETED";
-  if (String(reason).toLowerCase().indexOf("time") >= 0) return "TIMED OUT";
-  return String(reason).replace(/[_-]+/g, " ").toUpperCase();
+  const r = String(reason || "").toLowerCase();
+  if (r.indexOf("time") >= 0) return "TIMED OUT";
+  if (r.indexOf("invalid") >= 0) return "REJECTED MOVES";
+  return "INTEGRITY DEPLETED";
 }
 
 go("title");
