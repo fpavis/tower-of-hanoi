@@ -9,17 +9,17 @@ Wrong clicks, undo and hint presses cost one move-time. Daily uses one dungeon f
 
 Mode      Bot      Runs     Win    95CI  MedSect  MeanSect  MedMin  MeanMin  Stuck  Exc
 --------  -------  ----  ------  ------  -------  --------  ------  -------  -----  ---
-standard  Optimal   400  100.0%  +-0.0%     12.0      12.0     7.9      7.7      0    0
-standard  Human     400   19.8%  +-3.9%     12.0       9.2    11.6     10.3      0    0
+standard  Optimal   400  100.0%  +-0.0%     12.0      12.0     7.9      7.6      0    0
+standard  Human     400   23.8%  +-4.2%     12.0       9.3    11.8     10.4      0    0
 standard  Random    400    0.0%  +-0.0%      1.0       1.1     1.4      1.5      0    0
-blitz     Optimal   400  100.0%  +-0.0%     12.0      12.0     7.9      7.6      0    0
-blitz     Human     400   20.0%  +-3.9%     11.0       9.0    10.8      9.9      0    0
+blitz     Optimal   400  100.0%  +-0.0%     12.0      12.0     7.7      7.5      0    0
+blitz     Human     400   19.0%  +-3.8%     10.0       8.8    10.1      9.6      0    0
 blitz     Random    400    0.0%  +-0.0%      1.0       1.0     0.8      1.1      0    0
-endless   Optimal   400    0.0%  +-0.0%     16.0      16.0    11.5     11.4      0    0
-endless   Human     400    0.0%  +-0.0%     10.0       9.8    10.2     11.3      0    0
+endless   Optimal   400    0.0%  +-0.0%     16.0      16.0    11.3     11.3      0    0
+endless   Human     400    0.0%  +-0.0%     10.0      10.0    10.8     11.5      0    0
 endless   Random    400    0.0%  +-0.0%      1.0       1.1     1.3      1.5      0    0
-daily     Optimal   400  100.0%  +-0.0%     12.0      12.0     6.6      6.6      0    0
-daily     Human     400    9.3%  +-2.8%     12.0       9.9    15.9     13.6      0    0
+daily     Optimal   400  100.0%  +-0.0%     12.0      12.0     7.9      7.9      0    0
+daily     Human     400   12.3%  +-3.2%     12.0      10.6    15.2     13.6      0    0
 daily     Random    400    0.0%  +-0.0%      1.0       1.1     1.3      1.5      0    0
 
 2. Play, ratings and quests per mode and bot
@@ -27,17 +27,17 @@ daily     Random    400    0.0%  +-0.0%      1.0       1.1     1.3      1.5     
 
 Mode      Bot      Moves  Cards  Bosses  Timeouts  Quest%     S    A    B    C
 --------  -------  -----  -----  ------  --------  ------  ----  ---  ---  ---
-standard  Optimal    247   11.0    3.00       0.0     98%  100%   0%   0%   0%
-standard  Human      139    8.2    1.70       0.0     73%  100%   0%   0%   0%
+standard  Optimal    238   11.0    3.00       0.0     98%  100%   0%   0%   0%
+standard  Human      140    8.3    1.75       0.0     73%  100%   0%   0%   0%
 standard  Random      22    0.1    0.00       0.0     38%    0%  10%   5%  86%
-blitz     Optimal    241   11.0    3.00       0.0     98%  100%   0%   0%   0%
-blitz     Human      132    8.0    1.65       0.1     73%  100%   0%   0%   0%
+blitz     Optimal    234   11.0    3.00       0.0     98%  100%   0%   0%   0%
+blitz     Human      127    7.8    1.60       0.1     72%  100%   0%   0%   0%
 blitz     Random      13    0.0    0.00       1.3       -     -    -    -    -
-endless   Optimal    404   15.0    3.00       0.0     98%  100%   0%   0%   0%
-endless   Human      155    8.8    1.28       0.0     72%  100%   0%   0%   0%
+endless   Optimal    400   15.0    3.00       0.0     98%  100%   0%   0%   0%
+endless   Human      157    9.0    1.32       0.0     73%  100%   0%   0%   0%
 endless   Random      20    0.1    0.00       0.0     49%    0%   3%   9%  89%
-daily     Optimal    175   11.0    3.00       0.0    100%  100%   0%   0%   0%
-daily     Human      197    8.9    1.70       0.0     74%  100%   0%   0%   0%
+daily     Optimal    257   11.0    3.00       0.0    100%  100%   0%   0%   0%
+daily     Human      193    9.6    1.93       0.0     79%   99%   1%   0%   0%
 daily     Random      21    0.1    0.00       0.0    100%    0%   4%  11%  86%
 Moves = valid moves per run. Bosses = boss sectors cleared per run. Ratings = share of sector clears.
 
@@ -45,16 +45,16 @@ Moves = valid moves per run. Bosses = boss sectors cleared per run. Ratings = sh
 ===========================
 
 standard  Optimal  victory 400
-standard  Human    invalid 321, victory 79
+standard  Human    invalid 305, victory 95
 standard  Random   invalid 400
 blitz     Optimal  victory 400
-blitz     Human    invalid 307, victory 80, timeout 13
+blitz     Human    invalid 308, victory 76, timeout 16
 blitz     Random   timeout 220, invalid 180
 endless   Optimal  cap 400
 endless   Human    invalid 368, cap 32
 endless   Random   invalid 400
 daily     Optimal  victory 400
-daily     Human    invalid 363, victory 37
+daily     Human    invalid 351, victory 49
 daily     Random   invalid 400
 
 4. Survival curve, standard (fraction entering each sector)
@@ -69,54 +69,54 @@ Sector  Human  Optimal  Random
 5         82%     100%      0%
 6         81%     100%      0%
 7         77%     100%      0%
-8         75%     100%      0%
-9         68%     100%      0%
-10        61%     100%      0%
-11        57%     100%      0%
-12        53%     100%      0%
+8         74%     100%      0%
+9         70%     100%      0%
+10        64%     100%      0%
+11        59%     100%      0%
+12        55%     100%      0%
 
 5. Upgrade ablation (forced pick), standard, Human bot
 ======================================================
 
 Card              Rarity  Offer%  Nat%  WinBase  WinForced   dPP     SE   Lift  vsMean  MedSect  Flag
 ----------------  ------  ------  ----  -------  ---------  ----  -----  -----  ------  -------  ----
-bit_miner         common     86%   68%    19.8%      16.5%  -3.3  +-1.2  0.835    -14%    12>11
-stability_patch   common     82%   76%    19.8%      21.3%  +1.5  +-0.6  1.076    +10%    12>12
-neural_link       common     86%   79%    19.8%      21.0%  +1.3  +-1.2  1.063     +9%    12>11
-hint_pulse        common     77%    4%    19.8%      17.8%  -2.0  +-1.5  0.899     -8%    12>11
-quest_broker      common     80%   22%    19.8%      17.8%  -2.0  +-1.5  0.899     -8%    12>10
-forecast          common     81%    1%    19.8%      17.5%  -2.3  +-1.8  0.886     -9%    12>11
-reinforced        common     76%   66%    19.8%      21.5%  +1.8  +-0.9  1.089    +12%    12>12
-interest_engine   rare       69%   55%    19.8%      19.5%  -0.3  +-0.9  0.987     +1%    12>12
-field_repair      rare       57%   38%    19.8%      19.5%  -0.3  +-1.0  0.987     +1%    12>12
-undo_buffer       rare       48%    8%    19.8%      20.0%  +0.3  +-1.1  1.013     +4%    12>11
-overclock         rare       68%   51%    19.8%      19.0%  -0.8  +-1.0  0.962     -1%    12>12
-gilded_forge      rare       64%   46%    19.8%      18.0%  -1.8  +-1.1  0.911     -6%    12>11
-exoskeleton       rare       53%    3%    19.8%      18.0%  -1.8  +-1.3  0.911     -6%    12>11
-black_market      rare       54%    4%    19.8%      19.3%  -0.5  +-1.5  0.975     +0%    12>11
-momentum          rare       62%   38%    19.8%      19.8%  +0.0  +-1.3  1.000     +3%    12>11
-recursion         epic       40%    4%    19.8%      19.5%  -0.3  +-0.7  0.987     +1%    12>12
-phoenix_core      epic       36%    8%    19.8%      22.5%  +2.8  +-1.1  1.139    +17%    12>12   OUT
-ghost_protocol    epic       37%    1%    19.8%      21.5%  +1.8  +-1.0  1.089    +12%    12>12
-perfect_protocol  epic       36%    7%    19.8%      21.3%  +1.5  +-1.1  1.076    +10%    12>12
-greed_protocol    curse      63%    0%    19.8%      15.8%  -4.0  +-1.3  0.797    -18%    12>10   OUT
-hair_trigger      curse      60%    0%    19.8%      19.0%  -0.8  +-1.2  0.962     -1%    12>12
-static_debt       curse      58%    0%    19.8%      17.8%  -2.0  +-1.2  0.899     -8%    12>11
+bit_miner         common     86%   71%    23.8%      22.0%  -1.8  +-1.1  0.926     +1%    12>11
+stability_patch   common     82%   76%    23.8%      24.3%  +0.5  +-0.6  1.021    +12%    12>12
+neural_link       common     85%   78%    23.8%      21.5%  -2.3  +-1.4  0.905     -1%    12>12
+hint_pulse        common     77%    3%    23.8%      21.8%  -2.0  +-1.5  0.916     +0%    12>12
+quest_broker      common     78%   23%    23.8%      20.0%  -3.8  +-1.3  0.842     -8%    12>11
+forecast          common     78%    1%    23.8%      18.0%  -5.8  +-1.9  0.758    -17%    12>11   OUT
+reinforced        common     77%   66%    23.8%      26.3%  +2.5  +-0.9  1.105    +21%    12>12   OUT
+interest_engine   rare       67%   56%    23.8%      23.3%  -0.5  +-1.0  0.979     +7%    12>12
+field_repair      rare       58%   35%    23.8%      22.8%  -1.0  +-1.1  0.958     +5%    12>12
+undo_buffer       rare       50%    6%    23.8%      20.3%  -3.5  +-1.1  0.853     -7%    12>12
+overclock         rare       67%   53%    23.8%      21.8%  -2.0  +-0.9  0.916     +0%    12>12
+gilded_forge      rare       64%   44%    23.8%      22.5%  -1.3  +-1.0  0.947     +4%    12>12
+exoskeleton       rare       55%    3%    23.8%      20.0%  -3.8  +-1.6  0.842     -8%    12>12
+black_market      rare       51%    3%    23.8%      21.3%  -2.5  +-1.4  0.895     -2%    12>12
+momentum          rare       64%   43%    23.8%      21.8%  -2.0  +-1.3  0.916     +0%    12>12
+recursion         epic       42%    5%    23.8%      21.8%  -2.0  +-0.9  0.916     +0%    12>12
+phoenix_core      epic       38%    8%    23.8%      27.5%  +3.8  +-1.2  1.158    +27%    12>12   OUT
+ghost_protocol    epic       36%    2%    23.8%      22.3%  -1.5  +-1.1  0.937     +3%    12>12
+perfect_protocol  epic       37%    5%    23.8%      22.8%  -1.0  +-1.0  0.958     +5%    12>12
+greed_protocol    curse      59%    0%    23.8%      16.5%  -7.2  +-1.5  0.695    -24%    12>11   OUT
+hair_trigger      curse      60%    0%    23.8%      21.0%  -2.8  +-1.4  0.884     -3%    12>12
+static_debt       curse      56%    0%    23.8%      18.5%  -5.3  +-1.3  0.779    -15%    12>11
 Each card is forced at its first offer on the baseline seeds (n=400). Offer% = baseline runs where it was offered; Nat% = baseline runs where the Human bot took it.
-dPP = forced win minus baseline win, paired by seed; SE = paired one-sigma. Lift = forced / baseline. Mean lift over sampled cards: 0.975. OUT = lift more than 15% away from the mean.
+dPP = forced win minus baseline win, paired by seed; SE = paired one-sigma. Lift = forced / baseline. Mean lift over sampled cards: 0.914. OUT = lift more than 15% away from the mean.
 
 6. Economy, standard
 ====================
 
 Metric                       Human  Optimal  Random
 ---------------------------  -----  -------  ------
-Avg bits entering sector 4     145      198       -
-Avg bits entering sector 8     637      862       -
-Avg bits entering sector 12   2287     2641       -
-Runs reaching sector 12        212      400       0
-Avg rerolls per run           3.39     0.00    0.00
-Avg repairs per run           0.97     0.00    0.03
-Avg bits earned per run       2779     8082      23
+Avg bits entering sector 4     146      198       -
+Avg bits entering sector 8     651      847       -
+Avg bits entering sector 12   2236     2625       -
+Runs reaching sector 12        221      400       0
+Avg rerolls per run           3.35     0.00    0.00
+Avg repairs per run           0.96     0.00    0.03
+Avg bits earned per run       2814     7081      23
 Bits earned = move bits + clear bonus + quests + interest (shop spending excluded).
 
 7. Quest completion per quest id, standard
@@ -124,12 +124,12 @@ Bits earned = move bits + clear bonus + quests + interest (shop spending exclude
 
 Quest        Human  Optimal  Random  Human n
 ----------  ------  -------  ------  -------
-efficient   100.0%   100.0%    0.0%      772
-clean        65.1%   100.0%   20.0%      754
-chain        86.2%    91.7%  100.0%      756
-swift         3.9%   100.0%    0.0%      739
-gilded       97.2%    97.3%       -      251
-unassisted  100.0%   100.0%  100.0%      783
+efficient   100.0%   100.0%    0.0%      820
+clean        66.9%   100.0%   20.0%      762
+chain        85.0%    90.1%  100.0%      740
+swift         3.7%   100.0%    0.0%      767
+gilded       95.8%    96.7%       -      262
+unassisted  100.0%   100.0%  100.0%      775
 
 8. Modifier and boss frequency by sector, standard, Human bot
 =============================================================
@@ -140,14 +140,14 @@ Sector  surge  strict  tax  scramble  fog  overclock  gilded_rush      Boss
 2         56%     44%   0%        0%   0%         0%           0%
 3         36%     28%  17%       20%   0%         0%           0%
 4         27%     25%  16%       15%  17%         0%           0%  sentinel
-5         21%     20%  16%       14%  12%        10%           6%
-6         37%     41%  26%       26%  31%        26%          13%
-7         39%     39%  28%       27%  24%        30%          13%
+5         19%     19%  14%       12%  14%        15%           7%
+6         37%     41%  27%       28%  24%        26%          16%
+7         40%     39%  27%       27%  24%        28%          14%
 8          0%    100%   0%      100%   0%         0%           0%    mirror
-9         44%     36%  27%       27%  25%        27%          15%
-10        37%     37%  29%       26%  28%        29%          14%
-11        39%     38%  27%       26%  27%        27%          14%
-12        18%     23%  15%       16%  17%        12%         100%     stack
+9         35%     41%  27%       23%  29%        30%          14%
+10        41%     36%  26%       24%  30%        26%          17%
+11        35%     47%  24%       28%  27%        27%          12%
+12        19%     21%  17%       14%  15%        14%         100%     stack
 Percent of Human standard runs entering the sector that have the modifier.
 
 9. Blitz pace per sector (limit and minimal pace from each run's sector config)
@@ -159,15 +159,15 @@ Sector  Rings  LimitS  MinPaceS  Infeas  Timeouts  Reached
 1           3      29         6      0%      0.00     100%
 2           3      29         6      0%      0.00     100%
 3           3      28         6      0%      0.00     100%
-4           4      60        13      0%      0.00     100%
-5           4      45        10      0%      0.00     100%
-6           4      43        10      0%      0.00     100%
-7           4      46        10      0%      0.00     100%
-8           5      58        14      0%      0.00     100%
-9           5      82        20      0%      0.00     100%
-10          5      78        19      0%      0.00     100%
-11          5      78        19      0%      0.00     100%
-12          7     298        82      0%      0.00     100%
+4           4      59        13      0%      0.00     100%
+5           4      48        11      0%      0.00     100%
+6           4      44        10      0%      0.00     100%
+7           4      44        10      0%      0.00     100%
+8           5      60        14      0%      0.00     100%
+9           5      77        19      0%      0.00     100%
+10          5      79        20      0%      0.00     100%
+11          5      79        20      0%      0.00     100%
+12          7     276        76      0%      0.00     100%
 Human bot, blitz (move time 3 s)
 Sector  Rings  LimitS  MinPaceS  Infeas  Timeouts  Reached
 ------  -----  ------  --------  ------  --------  -------
@@ -175,14 +175,14 @@ Sector  Rings  LimitS  MinPaceS  Infeas  Timeouts  Reached
 2           3      29        21      0%      0.00      97%
 3           3      28        20      0%      0.00      91%
 4           4      59        43      0%      0.00      86%
-5           4      46        35      0%      0.00      80%
-6           4      44        33      0%      0.00      78%
-7           4      44        33      0%      0.00      75%
-8           5      62        49      0%      0.01      72%
-9           5      78        64      0%      0.02      65%
-10          5      76        62      0%      0.01      58%
-11          5      82        68      0%      0.01      53%
-12          7     284       263      0%      0.02      49%
+5           4      47        35      0%      0.00      80%
+6           4      44        33      0%      0.00      77%
+7           4      45        34      0%      0.01      73%
+8           5      64        50      0%      0.00      70%
+9           5      81        66      0%      0.01      61%
+10          5      85        71      0%      0.01      55%
+11          5      77        64      0%      0.02      49%
+12          7     271       252      0%      0.02      44%
 Limit and MinPace are means over runs reaching the sector. MinPace = fewest moves on core's hint path x the bot's move time. Infeas = runs whose MinPace exceeds that run's own limit.
 
 10. Balance targets (DESIGN section 11)
@@ -190,23 +190,25 @@ Limit and MinPace are means over runs reaching the sector. MinPace = fewest move
 
 Check                                                         Target     Value  Result
 --------------------------------------------------------  ----------  --------  ------
-Standard, Human: win rate                                     15-30%     19.8%    PASS
+Standard, Human: win rate                                     15-30%     23.8%    PASS
 Standard, Human: median sector where non-winners end            7-10      10.0    PASS
 Standard, Optimal: win rate (ceiling)                         >= 90%    100.0%    PASS
 Endless, Human: median sector reached                           9-13      10.0    PASS
-Blitz, Human: win rate                                        12-25%     20.0%    PASS
+Blitz, Human: win rate                                        12-25%     19.0%    PASS
 Random: win rate (worst mode)                                   < 5%      0.0%    PASS
-Upgrade pick-to-win lift within +-15% of mean (ablation)  every card     2 OUT    FAIL
-Run length, Human standard, median winning run             10-20 min  12.9 min    PASS
+Upgrade pick-to-win lift within +-15% of mean (ablation)  every card     4 OUT    FAIL
+Run length, Human standard, median winning run             10-20 min  13.2 min    PASS
 Sanity (not a DESIGN row): stuck 0, exceptions 0.
 
 11. Findings
 ============
 
-- FAIL Upgrade pick-to-win lift within +-15% of mean (ablation): 2 OUT (target every card).
-- Human standard run length: median winning run 12.9 min; median of all runs 11.6 min. Both include 20 s per sector overhead. Mean valid moves per run 139 at 3 s each.
-- Card phoenix_core: OUT, lift 1.139 (17% vs mean), forced effect 2.8 +-1.1 pp.
-- Card greed_protocol: OUT, lift 0.797 (-18% vs mean), forced effect -4.0 +-1.3 pp.
+- FAIL Upgrade pick-to-win lift within +-15% of mean (ablation): 4 OUT (target every card).
+- Human standard run length: median winning run 13.2 min; median of all runs 11.8 min. Both include 20 s per sector overhead. Mean valid moves per run 140 at 3 s each.
+- Card forecast: OUT, lift 0.758 (-17% vs mean), forced effect -5.8 +-1.9 pp.
+- Card reinforced: OUT, lift 1.105 (21% vs mean), forced effect 2.5 +-0.9 pp.
+- Card phoenix_core: OUT, lift 1.158 (27% vs mean), forced effect 3.8 +-1.2 pp.
+- Card greed_protocol: OUT, lift 0.695 (-24% vs mean), forced effect -7.2 +-1.5 pp.
 - Human bot never takes on its own: greed_protocol, hair_trigger, static_debt (priority gate). Their lift comes from the forced ablation only.
 
 12. API notes and runtime messages
