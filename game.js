@@ -35,10 +35,9 @@ const RARITY = {
 
 const Z = {
   bg: -100, disks: -50, board: 10, relay: 12, ring: 20, fx: 40,
-  ui: 60, hud: 70, pop: 80, glitch: 940, flash: 950, cover: 960, scan: 1000,
+  ui: 60, hud: 70, pop: 80, tip: 945, glitch: 940, flash: 950, cover: 960, scan: 1000,
 };
 
-const RELAY_X = [225, 450, 675];
 const RELAY_TOP = 150;
 const BASE_Y = 402;
 const RING_H = 22;
@@ -46,14 +45,24 @@ const STACK_STEP = 25;
 const LIFT = 20;
 const MOVE_DUR = 0.36;
 const HUD_BAND = 64;
+const NODE_LETTERS = "ABCD";
+const FOG_HEX = "#8a8fa3";
+const BALL_HEX = [PAL.cyan, PAL.magenta, PAL.lime, PAL.amber, PAL.violet, PAL.gold];
+
+// Relay x positions, spaced evenly across the canvas: 3 relays give 225/450/675 (the original layout).
+function relayX(i, n = 3) {
+  return Math.round(((i + 1) * LOGIC_W) / (n + 1));
+}
 
 const MODE_INFO = {
   standard: { name: "STANDARD", neon: PAL.cyan, blurb: "Twelve sectors. Bosses at 4, 8 and 12. Clear the Stack to win." },
   blitz: { name: "BLITZ", neon: PAL.amber, blurb: "Standard rules on a clock. Bits x1.25. Stalling costs integrity." },
   endless: { name: "ENDLESS", neon: PAL.magenta, blurb: "No victory. Bosses every five sectors. Run until integrity fails." },
   daily: { name: "DAILY", neon: PAL.lime, blurb: "Standard rules on today's shared seed. Same board for everyone." },
+  peg4: { name: "QUAD RELAY", neon: PAL.violet, blurb: "Four relays. The target relay moves between sectors." },
+  reverse: { name: "REVERSE", neon: PAL.gold, blurb: "Stacking is inverted. Rings may only rest on smaller rings." },
 };
-const MODE_ORDER = ["standard", "blitz", "endless", "daily"];
+const MODE_ORDER = ["standard", "blitz", "endless", "daily", "peg4", "reverse"];
 
 const MODIFIER_HEX = {
   surge: PAL.amber, strict: PAL.danger, tax: PAL.magenta, scramble: PAL.violet,
@@ -147,7 +156,7 @@ function bestScoreAll() {
 // ---------- shared session state ----------
 const SESSION = {
   run: null, mode: "standard", asc: false, seed: null,
-  sector: null, board: null, t0: 0, recorded: false, newBest: false,
+  sector: null, board: null, t0: 0, recorded: false, newBest: false, bonus: null,
 };
 const UI = { asc: false };
 const ESC = { until: -1 };
@@ -375,11 +384,31 @@ function drawPill(cx, cy, label, hex, w = 92) {
   drawText({ text: label, size: 16, pos: vec2(cx, cy), anchor: "center", color: hexC(PAL.ink) });
 }
 
+// Fog (DESIGN 13.4): a buried ring is a neutral slab with no size number. Special types keep a small marker.
+function drawFogRing(cx, cy, w, h, type, op) {
+  const center = vec2(cx, cy);
+  const x0 = cx - w / 2;
+  const y0 = cy - h / 2;
+  drawRect({ pos: center, width: w + 2, height: h + 2, anchor: "center", radius: 7, color: hexC(PAL.chrome), opacity: 0.3 * op });
+  drawRect({ pos: center, width: w, height: h, anchor: "center", radius: 6, color: hexC(FOG_HEX), opacity: op });
+  drawRect({ pos: vec2(cx, y0 + 3), width: w - 10, height: 2, anchor: "center", color: hexC(PAL.white), opacity: 0.18 * op });
+  if (type === "gilded") drawCircle({ pos: vec2(x0 + 9, cy), radius: 3.5, color: hexC(PAL.gold), opacity: op });
+  else if (type === "ghost") dashedRect(x0, y0, w, h, 6, 4, PAL.white, 0.8 * op);
+  else if (type === "heavy") {
+    drawRect({ pos: vec2(cx, cy - h * 0.27), width: w - 12, height: 2, anchor: "center", color: hexC(PAL.chrome), opacity: 0.9 * op });
+    drawRect({ pos: vec2(cx, cy + h * 0.27), width: w - 12, height: 2, anchor: "center", color: hexC(PAL.chrome), opacity: 0.9 * op });
+  } else if (type === "aegis") drawCircle({ pos: vec2(x0 + w - 9, cy), radius: 3.5, color: hexC(PAL.amber), opacity: op });
+}
+
 // One ring, drawn in its own colour, type treatment and size chip.
 function drawRingAt(cx, cy, size, n, type, o = {}) {
   const op = o.opacity ?? 1;
   const h = o.h ?? RING_H;
   const w = o.w ?? ringWidth(size);
+  if (o.fog) {
+    drawFogRing(cx, cy, w, h, type, op);
+    return;
+  }
   const hex = ringHex(size, n);
   const tt = time();
   const x0 = cx - w / 2;
@@ -657,8 +686,9 @@ function addSynth(opts = {}) {
 }
 
 // A short row of rings used as a mode icon: sizes step up left to right.
-function drawRingRow(cx, cy, count) {
-  const gap = 5;
+// maxW shrinks the whole row (rings and gaps) when a card is too narrow for the full icon.
+function drawRingRow(cx, cy, count, maxW = Infinity) {
+  let gap = 5;
   let total = 0;
   const widths = [];
   for (let s = 1; s <= count; s++) {
@@ -667,10 +697,16 @@ function drawRingRow(cx, cy, count) {
     total += w;
   }
   total += gap * (count - 1);
+  const k = Math.min(1, maxW / total);
+  if (k < 1) {
+    widths.forEach((w, i) => { widths[i] = w * k; });
+    gap *= k;
+    total *= k;
+  }
   let x = cx - total / 2;
   for (let s = 1; s <= count; s++) {
     const w = widths[s - 1];
-    drawRingAt(x + w / 2, cy, s, count, "standard", { w, h: 12, chip: false, opacity: 0.95 });
+    drawRingAt(x + w / 2, cy, s, count, "standard", { w, h: 12 * k, chip: false, opacity: 0.95 });
     x += w + gap;
   }
 }
@@ -727,11 +763,14 @@ function addItem({ x, y, w, h, neon = PAL.cyan, enabled = true, radius = 10, onP
   return makeItem(body, { neon, enabled, onPick, onStyle });
 }
 
+// Enables or disables a menu button. The label keeps its focus colour (ink on a lit fill) while focused.
 function setItemEnabled(item, on, neon) {
   if (!item.body.exists()) return;
+  if (neon) item.neon = neon;
+  if (!on && item.focused) item.setFocus(false);
   item.body.isEnabled = on;
   item.body.opacity = on ? 0.94 : 0.4;
-  if (item.lbl) item.lbl.color = hexC(on ? (neon ?? item.neon) : PAL.dim);
+  if (item.lbl) item.lbl.color = hexC(!on ? PAL.dim : item.focused ? PAL.ink : item.neon);
 }
 
 function menuButton({ x, y, w = 260, h = 44, label, neon = PAL.cyan, size = 22, enabled = true, onPick }) {
@@ -792,9 +831,136 @@ function bindMenu(items) {
   };
 }
 
+// ---------- tooltip: one reusable card for every hover target (DESIGN 13.8) ----------
+// tipZone() adds an invisible hit area; hovering it shows TIP's card next to the pointer.
+const TIP = { obj: null, owner: null, card: null };
+const TIP_W = 300;
+const TIP_PAD = 14;
+const TIP_GAP = 6;
+
+function tipMeasure(info) {
+  const inner = TIP_W - TIP_PAD * 2;
+  const c = { hex: info.hex || PAL.cyan, title: info.title, desc: info.desc || "", detail: info.detail || "", foot: info.foot || "" };
+  c.hT = formatText({ text: c.title, size: 18, width: inner }).height;
+  c.hD = c.desc ? formatText({ text: c.desc, size: 16, width: inner }).height : 0;
+  c.hX = c.detail ? formatText({ text: c.detail, size: 16, width: inner }).height : 0;
+  c.hF = c.foot ? formatText({ text: c.foot, size: 16, width: inner }).height : 0;
+  c.w = TIP_W;
+  c.h = TIP_PAD * 2 + c.hT + (c.hD ? TIP_GAP + c.hD : 0) + (c.hX ? TIP_GAP + c.hX : 0) + (c.hF ? TIP_GAP + c.hF : 0);
+  c.x = 0;
+  c.y = 0;
+  return c;
+}
+
+function tipPlace() {
+  const c = TIP.card;
+  if (!c) return;
+  const m = mousePos();
+  const off = 18;
+  let x = m.x + off;
+  let y = m.y + off;
+  if (x + c.w > LOGIC_W - 8) x = m.x - off - c.w;
+  if (y + c.h > LOGIC_H - 8) y = m.y - off - c.h;
+  c.x = clampN(x, 8, LOGIC_W - 8 - c.w);
+  c.y = clampN(y, 8, LOGIC_H - 8 - c.h);
+}
+
+function tipDraw(c) {
+  const inner = TIP_W - TIP_PAD * 2;
+  drawRect({
+    pos: vec2(c.x, c.y), width: c.w, height: c.h, anchor: "topleft", radius: 10,
+    color: hexC(PAL.ink), opacity: 0.96, outline: { width: 2, color: hexC(c.hex) },
+  });
+  let y = c.y + TIP_PAD;
+  drawText({ text: c.title, size: 18, pos: vec2(c.x + TIP_PAD, y), anchor: "topleft", width: inner, color: hexC(c.hex) });
+  y += c.hT;
+  if (c.hD) {
+    y += TIP_GAP;
+    drawText({ text: c.desc, size: 16, pos: vec2(c.x + TIP_PAD, y), anchor: "topleft", width: inner, color: hexC(PAL.white) });
+    y += c.hD;
+  }
+  if (c.hX) {
+    y += TIP_GAP;
+    drawText({ text: c.detail, size: 16, pos: vec2(c.x + TIP_PAD, y), anchor: "topleft", width: inner, color: hexC(PAL.chrome) });
+    y += c.hX;
+  }
+  if (c.hF) {
+    y += TIP_GAP;
+    drawText({ text: c.foot, size: 16, pos: vec2(c.x + TIP_PAD, y), anchor: "topleft", width: inner, color: hexC(PAL.gold) });
+  }
+}
+
+function tipEnsure() {
+  if (TIP.obj && TIP.obj.exists()) return;
+  TIP.obj = add([
+    pos(0, 0), z(Z.tip), fixed(), "tooltip",
+    {
+      update() {
+        if (!TIP.card) return;
+        if (TIP.owner && !TIP.owner.exists()) {
+          TIP.owner = null;
+          TIP.card = null;
+          return;
+        }
+        tipPlace();
+      },
+      draw() {
+        if (TIP.card) tipDraw(TIP.card);
+      },
+    },
+  ]);
+}
+
+function tipShow(owner, info) {
+  if (!info || !info.title) return;
+  tipEnsure();
+  TIP.owner = owner;
+  TIP.card = tipMeasure(info);
+  tipPlace();
+}
+
+function tipHide(owner) {
+  if (owner && TIP.owner !== owner) return;
+  TIP.owner = null;
+  TIP.card = null;
+}
+
+// Invisible hit area with a tooltip. info is an object, or a function read on hover.
+function tipZone(x, y, w, h, info, o = {}) {
+  const comps = [rect(w, h), pos(x, y), anchor(o.anchor ?? "topleft"), opacity(0), area(), z(Z.ui + 3)];
+  if (o.fixed) comps.push(fixed());
+  if (o.tag) comps.push(o.tag);
+  const zone = add(comps);
+  zone.onHover(() => tipShow(zone, typeof info === "function" ? info() : info));
+  zone.onHoverEnd(() => tipHide(zone));
+  return zone;
+}
+
+// Catalogue lookups: core supplies name, desc and detail. detail may be missing, so it falls back to desc alone.
+function modTip(id) {
+  const d = (HanoiCore.MODIFIERS || []).find((m) => m.id === id) || null;
+  return {
+    hex: MODIFIER_HEX[id] || PAL.cyan,
+    title: String(d ? d.name : titleOf(id)).toUpperCase(),
+    desc: d ? d.desc || "" : "",
+    detail: d ? d.detail || "" : "",
+  };
+}
+function questTip(q, hex = PAL.lime) {
+  const d = (HanoiCore.QUESTS || []).find((x) => x.id === q.id) || {};
+  return {
+    hex,
+    title: String(q.name || d.name || "QUEST").toUpperCase(),
+    desc: d.desc || q.desc || "",
+    detail: d.detail || "",
+    foot: q.reward ? "REWARD +" + q.reward + " BITS" : "",
+  };
+}
+
 // Scene change: fade to black, then go(). navBusy blocks double navigation.
 function navigate(sceneName, args) {
   if (navBusy) return;
+  tipHide();
   navBusy = true;
   const cover = add([rect(LOGIC_W, LOGIC_H), pos(0, 0), color(hexC(PAL.bg)), opacity(0), fixed(), z(Z.cover)]);
   tw(0, 1, 0.16, (v) => { if (cover.exists()) cover.opacity = v; }, easings.easeInOutSine);
@@ -846,7 +1012,7 @@ function recordRun() {
   saveStore();
 }
 
-function addEscBanner(y) {
+function addEscBanner(y, label = "PRESS ESC AGAIN TO ABORT RUN") {
   add([
     pos(0, 0),
     z(Z.pop + 5),
@@ -854,7 +1020,7 @@ function addEscBanner(y) {
       draw() {
         if (time() >= ESC.until) return;
         drawRect({ pos: vec2(450, y), width: 420, height: 30, anchor: "center", radius: 6, color: hexC(PAL.ink), opacity: 0.9 });
-        drawText({ text: "PRESS ESC AGAIN TO ABORT RUN", size: 18, pos: vec2(450, y), anchor: "center", color: hexC(PAL.danger) });
+        drawText({ text: label, size: 18, pos: vec2(450, y), anchor: "center", color: hexC(PAL.danger) });
       },
     },
   ]);
@@ -863,6 +1029,16 @@ function addEscBanner(y) {
 function escPress() {
   if (time() < ESC.until) {
     abortRun();
+    return;
+  }
+  ESC.until = time() + 2.5;
+  sfxSoft();
+}
+
+// Bonus games: the same double-ESC rule, but it forfeits the bonus instead of the run.
+function bonusEscPress(onForfeit) {
+  if (time() < ESC.until) {
+    onForfeit();
     return;
   }
   ESC.until = time() + 2.5;
@@ -979,11 +1155,11 @@ scene("modes", () => {
   addOverlay();
   txt("SELECT PROTOCOL", 450, 44, { size: 32, hex: PAL.cyan, stroke: 4 });
 
-  const cardW = 200;
+  const cardW = 136;
   const cardH = 268;
   const cardY = 206;
-  const gap = 16;
-  const x0 = (LOGIC_W - (4 * cardW + 3 * gap)) / 2 + cardW / 2;
+  const gap = 10;
+  const x0 = (LOGIC_W - (MODE_ORDER.length * cardW + (MODE_ORDER.length - 1) * gap)) / 2 + cardW / 2;
   const items = [];
   const bestLabels = {};
 
@@ -991,7 +1167,7 @@ scene("modes", () => {
     const seedKey = id === "daily" ? todaySeed() : null;
     const e = bestOf(recordKey(id, UI.asc, seedKey));
     if (!e) return { a: "NO RECORD", b: "" };
-    return { a: "BEST " + fmt(e.score), b: "SECTOR " + e.sectors + (e.win ? "  CLEARED" : "") };
+    return { a: "BEST " + fmt(e.score), b: "SECTOR " + e.sectors + (e.win ? " WON" : "") };
   };
 
   MODE_ORDER.forEach((id, i) => {
@@ -1009,14 +1185,14 @@ scene("modes", () => {
       z(Z.ui),
       "menu-item",
     ]);
-    body.add([text(info.name, { size: 26 }), pos(0, -cardH / 2 + 36), anchor("center"), color(hexC(info.neon)), outline(3, hexC(PAL.ink)), z(Z.ui + 1)]);
-    body.add([text(info.blurb, { size: 16, width: cardW - 30, align: "center" }), pos(0, -4), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
-    const iconCount = { standard: 3, blitz: 3, endless: 5, daily: 4 }[id] || 3;
+    body.add([text(info.name, { size: 20 }), pos(0, -cardH / 2 + 36), anchor("center"), color(hexC(info.neon)), outline(3, hexC(PAL.ink)), z(Z.ui + 1)]);
+    body.add([text(info.blurb, { size: 16, width: cardW - 18, align: "center" }), pos(0, 2), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
+    const iconCount = { standard: 3, blitz: 3, endless: 5, daily: 4, peg4: 4, reverse: 3 }[id] || 3;
     add([
       pos(0, 0), z(Z.ui + 1),
-      { draw() { drawRingRow(body.pos.x, body.pos.y - cardH / 2 + 72, iconCount); } },
+      { draw() { drawRingRow(body.pos.x, body.pos.y - cardH / 2 + 72, iconCount, cardW - 28); } },
     ]);
-    body.add([rect(cardW - 40, 1), pos(0, cardH / 2 - 70), anchor("center"), color(hexC(info.neon)), opacity(0.5), z(Z.ui + 1)]);
+    body.add([rect(cardW - 24, 1), pos(0, cardH / 2 - 70), anchor("center"), color(hexC(info.neon)), opacity(0.5), z(Z.ui + 1)]);
     const bestA = body.add([text("", { size: 18 }), pos(0, cardH / 2 - 50), anchor("center"), color(hexC(PAL.white)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
     const bestB = body.add([text("", { size: 16 }), pos(0, cardH / 2 - 24), anchor("center"), color(hexC(PAL.chrome)), outline(2, hexC(PAL.ink)), z(Z.ui + 1)]);
     bestLabels[id] = { bestA, bestB };
@@ -1062,58 +1238,85 @@ scene("modes", () => {
   txt("ENTER SELECTS    ESC BACK", 690, 478, { size: 16, hex: PAL.dim, stroke: 2 });
 });
 
-// ---------- codex: ring types, upgrades seen, records ----------
+// ---------- codex: rings, upgrades, quests, modifiers, records. PREV and NEXT page every tab. ----------
 scene("codex", () => {
   navBusy = false;
   ESC.until = -1;
+  tipHide();
   addSynth({ disks: 4 });
   addOverlay();
   txt("CODEX", 450, 40, { size: 32, hex: PAL.violet, stroke: 4 });
 
+  const PER_PAGE = 4;
+  const ROW_Y = (i) => 160 + i * 74;
+  const TABS = [
+    { name: "RINGS", hex: PAL.cyan },
+    { name: "UPGRADES", hex: PAL.amber },
+    { name: "QUESTS", hex: PAL.lime },
+    { name: "MODIFIERS", hex: PAL.magenta },
+    { name: "RECORDS", hex: PAL.gold },
+  ];
+  const upgrades = HanoiCore.UPGRADES || [];
+  const quests = HanoiCore.QUESTS || [];
+  const modifiers = HanoiCore.MODIFIERS || [];
+  const ringTypes = Object.keys(HanoiCore.RING_TYPES || {});
+  const recordRows = () => {
+    const seed = todaySeed();
+    return [
+      ["STANDARD", bestOf(recordKey("standard", false, null))],
+      ["BLITZ", bestOf(recordKey("blitz", false, null))],
+      ["ENDLESS", bestOf(recordKey("endless", false, null))],
+      ["DAILY  " + seed, bestOf(recordKey("daily", false, seed))],
+      ["QUAD RELAY", bestOf(recordKey("peg4", false, null))],
+      ["REVERSE", bestOf(recordKey("reverse", false, null))],
+      ["STANDARD ASCENSION", bestOf(recordKey("standard", true, null))],
+    ];
+  };
+  const countOf = (t) => [ringTypes.length, upgrades.length, quests.length, modifiers.length, recordRows().length][t];
+
   let tab = 0;
   let page = 0;
-  const PER_PAGE = 5;
-  const tabNames = ["RINGS", "UPGRADES", "RECORDS"];
-  const tabHex = [PAL.cyan, PAL.amber, PAL.lime];
-  const upgrades = HanoiCore.UPGRADES || [];
-  const ringTypes = Object.keys(HanoiCore.RING_TYPES || {});
+  const maxPage = () => Math.max(1, Math.ceil(countOf(tab) / PER_PAGE)) - 1;
 
-  const tabItems = tabNames.map((name, i) => {
-    const item = menuButton({
-      x: 210 + i * 240, y: 84, w: 200, h: 34, label: name, neon: tabHex[i], size: 18,
-      onPick: () => { tab = i; page = 0; render(); },
-    });
-    return item;
+  const tabItems = TABS.map((t, i) => menuButton({
+    x: 450 + (i - 2) * 166, y: 84, w: 160, h: 34, label: t.name, neon: t.hex, size: 18,
+    onPick: () => { tab = i; page = 0; render(); },
+  }));
+  // PREV, the page count and NEXT sit in the centre; BACK stays clear of them.
+  const prevItem = menuButton({
+    x: 330, y: 470, w: 130, h: 34, label: "< PREV", neon: PAL.amber, size: 18,
+    onPick: () => { if (page > 0) { page -= 1; render(); } },
   });
-  const prevItem = menuButton({ x: 240, y: 470, w: 130, h: 34, label: "< PREV", neon: PAL.amber, size: 18, onPick: () => { page = Math.max(0, page - 1); render(); } });
-  const nextItem = menuButton({ x: 390, y: 470, w: 130, h: 34, label: "NEXT >", neon: PAL.amber, size: 18, onPick: () => { page = Math.min(maxPage(), page + 1); render(); } });
+  const nextItem = menuButton({
+    x: 570, y: 470, w: 130, h: 34, label: "NEXT >", neon: PAL.amber, size: 18,
+    onPick: () => { if (page < maxPage()) { page += 1; render(); } },
+  });
   const backItem = menuButton({ x: 110, y: 470, w: 150, h: 34, label: "< BACK", neon: PAL.chrome, size: 18, onPick: () => navigate("title") });
-  const items = [...tabItems, prevItem, nextItem, backItem];
-  bindMenu(items);
+  const pageLbl = txt("", 450, 470, { size: 16, hex: PAL.chrome, stroke: 2 });
+  bindMenu([...tabItems, prevItem, nextItem, backItem]);
   onKeyPress("escape", () => navigate("title"));
-
-  function maxPage() {
-    return Math.max(0, Math.ceil(upgrades.length / PER_PAGE) - 1);
-  }
 
   function clearContent() {
     get("codex-content").forEach((o) => { if (o.exists()) destroy(o); });
   }
 
   function render() {
+    tipHide();
     clearContent();
+    page = clampN(page, 0, maxPage());
     tabItems.forEach((it, i) => {
-      it.lbl.text = (i === tab ? "> " : "") + tabNames[i] + (i === tab ? " <" : "");
+      it.lbl.text = (i === tab ? "> " : "") + TABS[i].name + (i === tab ? " <" : "");
     });
-    const onUpgrades = tab === 1;
-    setItemEnabled(prevItem, onUpgrades && page > 0, PAL.amber);
-    setItemEnabled(nextItem, onUpgrades && page < maxPage(), PAL.amber);
+    setItemEnabled(prevItem, page > 0, PAL.amber);
+    setItemEnabled(nextItem, page < maxPage(), PAL.amber);
+    pageLbl.text = "PAGE " + (page + 1) + " / " + (maxPage() + 1);
 
     const T = { tag: "codex-content" };
+    const from = page * PER_PAGE;
     if (tab === 0) {
-      ringTypes.forEach((k, i) => {
+      ringTypes.slice(from, from + PER_PAGE).forEach((k, i) => {
         const def = HanoiCore.RING_TYPES[k];
-        const y = 150 + i * 62;
+        const y = ROW_Y(i);
         const hex = k === "gilded" ? PAL.gold : k === "aegis" ? PAL.amber : k === "heavy" ? PAL.chrome : k === "ghost" ? PAL.white : PAL.cyan;
         add([
           pos(0, 0), z(Z.ui), "codex-content",
@@ -1124,10 +1327,9 @@ scene("codex", () => {
       });
     } else if (tab === 1) {
       const seen = upgrades.filter((u) => STORE.seen[u.id]).length;
-      txt("SEEN " + seen + " / " + upgrades.length + "   PAGE " + (page + 1) + " / " + (maxPage() + 1), 884, 150, { anchor: "right", align: "right", size: 16, hex: PAL.chrome, stroke: 2, ...T });
-      const slice = upgrades.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
-      slice.forEach((u, i) => {
-        const y = 170 + i * 60;
+      txt("SEEN " + seen + " / " + upgrades.length, 884, 136, { anchor: "right", align: "right", size: 16, hex: PAL.chrome, stroke: 2, ...T });
+      upgrades.slice(from, from + PER_PAGE).forEach((u, i) => {
+        const y = ROW_Y(i);
         const known = !!STORE.seen[u.id];
         const rar = RARITY[u.rarity] || RARITY.common;
         const pillX = 112;
@@ -1139,16 +1341,31 @@ scene("codex", () => {
         txt(known ? u.name : "???", 200, y - 12, { anchor: "left", align: "left", size: 18, hex: known ? rar.hex : PAL.chrome, stroke: 2, ...T });
         txt(known ? (u.desc || "") : "Unseen protocol. Take it to reveal.", 200, y + 12, { anchor: "left", align: "left", size: 16, width: 660, hex: PAL.chrome, stroke: 2, ...T });
       });
+    } else if (tab === 2) {
+      quests.slice(from, from + PER_PAGE).forEach((q, i) => {
+        const y = ROW_Y(i);
+        const hex = PAL.lime;
+        txt(String(q.name || q.id).toUpperCase(), 130, y - 12, { anchor: "left", align: "left", size: 20, hex, stroke: 3, ...T });
+        txt(q.desc || "", 130, y + 14, { anchor: "left", align: "left", size: 16, width: 600, hex: PAL.chrome, stroke: 2, ...T });
+        txt("BASE +" + (q.reward || 0) + " BITS", 870, y - 12, { anchor: "right", align: "right", size: 16, hex: PAL.gold, stroke: 2, ...T });
+        tipZone(110, y - 32, 760, 62, () => questTip(q, hex), T);
+      });
+    } else if (tab === 3) {
+      modifiers.slice(from, from + PER_PAGE).forEach((m, i) => {
+        const y = ROW_Y(i);
+        const hex = MODIFIER_HEX[m.id] || PAL.cyan;
+        add([
+          pos(112, y), anchor("center"), z(Z.ui), "codex-content",
+          rect(120, 20, { radius: 10 }), color(hexC(hex)),
+        ]);
+        txt("SECTOR " + (m.minSector || 1) + "+", 112, y, { size: 16, hex: PAL.ink, stroke: 0, z: Z.ui + 1, ...T });
+        txt(String(m.name || m.id).toUpperCase(), 200, y - 12, { anchor: "left", align: "left", size: 20, hex, stroke: 3, ...T });
+        txt(m.desc || "", 200, y + 14, { anchor: "left", align: "left", size: 16, width: 660, hex: PAL.chrome, stroke: 2, ...T });
+        tipZone(110, y - 32, 760, 62, () => modTip(m.id), T);
+      });
     } else {
-      const rows = [
-        ["STANDARD", bestOf(recordKey("standard", false, null))],
-        ["BLITZ", bestOf(recordKey("blitz", false, null))],
-        ["ENDLESS", bestOf(recordKey("endless", false, null))],
-        ["DAILY  " + todaySeed(), bestOf(recordKey("daily", false, todaySeed()))],
-        ["STANDARD ASCENSION", bestOf(recordKey("standard", true, null))],
-      ];
-      rows.forEach(([name, e], i) => {
-        const y = 160 + i * 52;
+      recordRows().slice(from, from + PER_PAGE).forEach(([name, e], i) => {
+        const y = ROW_Y(i);
         txt(name, 130, y, { anchor: "left", align: "left", size: 20, hex: PAL.lime, stroke: 2, ...T });
         const val = e ? fmt(e.score) + "   SECTOR " + e.sectors + (e.win ? "   CLEARED" : "") : "NO RECORD";
         txt(val, 884, y, { anchor: "right", align: "right", size: 18, hex: e ? PAL.white : PAL.dim, stroke: 2, ...T });
@@ -1163,6 +1380,7 @@ scene("codex", () => {
 scene("intro", () => {
   navBusy = false;
   ESC.until = -1;
+  tipHide();
   const run = SESSION.run;
   if (!run) { go("title"); return; }
   const sector = HanoiCore.sectorConfig(run);
@@ -1174,6 +1392,7 @@ scene("intro", () => {
   SESSION.sector = sector;
   const boss = !!sector.isBoss;
   const accent = boss ? PAL.magenta : PAL.cyan;
+  const towers = sector.towerCount || 3;
 
   addDotGrid(accent);
   addOverlay();
@@ -1187,10 +1406,12 @@ scene("intro", () => {
     ? txt("BOSS // " + String(sector.boss.name || "").toUpperCase() + "   " + (sector.boss.rule || ""), 450, 82, { size: 16, hex: PAL.white, stroke: 2, width: 820, opacity: 0 })
     : txt("CLEAR THE TOWER. KEEP YOUR INTEGRITY.", 450, 82, { size: 16, hex: PAL.chrome, stroke: 2, opacity: 0 });
   tw(0, 1, 0.4, (v) => { if (header.exists()) header.opacity = v; sub.opacity = v; }, easings.easeOutCubic);
+  if (sector.reversed) drawReverseBanner(104);
 
   // LEFT: the numbers, then the start layout with the target node marked
   const leftX = 60;
-  const rows = [["RINGS", String(sector.rings.length)], ["TARGET", "NODE " + "ABC"[sector.target]], ["PAR", (sector.par ?? "?") + " MOVES"]];
+  const rows = [["RINGS", String(sector.rings.length)], ["TARGET", "NODE " + NODE_LETTERS[sector.target]], ["PAR", (sector.par ?? "?") + " MOVES"]];
+  if (towers !== 3) rows.push(["RELAYS", String(towers)]);
   if (sector.timeLimit) rows.push(["TIME", Math.round(sector.timeLimit) + " S"]);
   rows.forEach(([k, v], i) => {
     const y = 128 + i * 30;
@@ -1199,21 +1420,32 @@ scene("intro", () => {
   });
   addSectorPreview(sector, leftX, 282, 370, 116);
 
-  // RIGHT: quest card
+  // RIGHT: quest card. Hovering it (or a boss quest row) shows that quest's tooltip.
   const qx = 470;
+  const quests = [sector.quest, sector.bossQuest].filter(Boolean);
   add([rect(370, 136, { radius: 12 }), pos(qx, 128), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.92), outline(2, hexC(accent)), z(Z.ui)]);
   txt("QUEST", qx + 22, 146, { anchor: "left", align: "left", size: 18, hex: PAL.dim, stroke: 2 });
-  const quests = [sector.quest, sector.bossQuest].filter(Boolean);
-  const quest = quests[0] || { name: "Clear the tower", desc: "", reward: 0 };
-  txt(quest.name, qx + 22, 170, { anchor: "left", align: "left", size: 24, hex: accent, stroke: 3, width: 330 });
-  txt(quest.desc || "", qx + 22, 198, { anchor: "topleft", align: "left", size: 16, width: 330, hex: PAL.white, stroke: 2 });
   const rewardSum = quests.reduce((a, q) => a + (q.reward || 0), 0);
-  txt("REWARD  +" + rewardSum + " BITS" + (quests.length > 1 ? "   (2 QUESTS)" : ""), qx + 22, 240, { anchor: "left", align: "left", size: 18, hex: PAL.lime, stroke: 2 });
+  if (quests.length <= 1) {
+    const quest = quests[0] || { id: "", name: "Clear the tower", desc: "", reward: 0 };
+    txt(quest.name, qx + 22, 170, { anchor: "left", align: "left", size: 24, hex: accent, stroke: 3, width: 330 });
+    txt(quest.desc || "", qx + 22, 198, { anchor: "topleft", align: "left", size: 16, width: 330, hex: PAL.white, stroke: 2 });
+    txt("REWARD  +" + rewardSum + " BITS", qx + 22, 240, { anchor: "left", align: "left", size: 18, hex: PAL.lime, stroke: 2 });
+    tipZone(qx, 128, 370, 136, () => questTip(quest, accent), {});
+  } else {
+    quests.forEach((q, i) => {
+      const y = 172 + i * 30;
+      txt(q.name, qx + 22, y, { anchor: "left", align: "left", size: 20, hex: accent, stroke: 3, width: 260 });
+      txt("+" + q.reward, qx + 348, y, { anchor: "right", align: "right", size: 18, hex: PAL.lime, stroke: 2 });
+      tipZone(qx + 12, y - 14, 346, 28, () => questTip(q, accent), {});
+    });
+    txt("BOSS REWARD  +" + rewardSum + " BITS", qx + 22, 240, { anchor: "left", align: "left", size: 18, hex: PAL.lime, stroke: 2 });
+  }
   if ((run.upgrades && run.upgrades.forecast) > 0) {
     txt("FORECAST MATCHED", qx + 348, 146, { anchor: "right", align: "right", size: 16, hex: PAL.amber, stroke: 2 });
   }
 
-  // RIGHT: modifier chips and the special ring legend
+  // RIGHT: modifier chips (hover for the tooltip) and the special ring legend
   const modY = 286;
   const mods = sector.modifiers || [];
   mods.forEach((id, i) => {
@@ -1223,9 +1455,10 @@ scene("intro", () => {
     const cx = qx + chipW / 2 + i * (chipW + 12);
     add([rect(chipW, 24, { radius: 12 }), pos(cx, modY), anchor("center"), color(hexC(PAL.ink)), outline(2, hexC(hex)), z(Z.ui)]);
     txt((def ? def.name : titleOf(id)).toUpperCase(), cx, modY, { size: 16, hex, stroke: 2 });
+    tipZone(cx, modY, chipW, 24, () => modTip(id), { anchor: "center" });
   });
   if (!mods.length) txt("NO MODIFIERS", qx, modY, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
-  if (sector.fog) txt("FOG: NON-TOP RINGS DIMMED", qx, modY + 26, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2 });
+  if (sector.fog) txt("FOG: BURIED RINGS HIDE THEIR SIZE", qx, modY + 26, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2 });
 
   const legend = [];
   ["gilded", "ghost", "heavy", "aegis"].forEach((k) => {
@@ -1251,24 +1484,45 @@ scene("intro", () => {
   txt("ENTER ENGAGE    ESC TWICE TO ABORT", 450, 480, { size: 16, hex: PAL.dim, stroke: 2 });
 });
 
-// Mini view of the start layout: three tubes, rings at their real sizes, the target tagged.
+// REVERSE banner (DESIGN 13.1): shown on the intro of every reversed sector.
+function drawReverseBanner(y) {
+  add([
+    pos(0, 0), z(Z.ui),
+    {
+      draw() {
+        drawRect({
+          pos: vec2(450, y), width: 820, height: 24, anchor: "center", radius: 8,
+          color: hexC(PAL.ink), opacity: 0.92, outline: { width: 2, color: hexC(PAL.gold) },
+        });
+        drawText({
+          text: "REVERSE PROTOCOL  //  RINGS MAY ONLY REST ON SMALLER RINGS",
+          size: 16, pos: vec2(450, y), anchor: "center", color: hexC(PAL.gold),
+        });
+      },
+    },
+  ]);
+}
+
+// Mini view of the start layout: one tube per relay, rings at their real sizes, the target tagged.
 function addSectorPreview(sector, x0, top, w, h) {
   const bottom = top + h;
-  const spacing = w / 3;
+  const towers = sector.towerCount || sector.start.length || 3;
+  const spacing = w / towers;
+  const plateW = Math.min(96, spacing - 12);
   const n = sector.rings.length;
   add([
     pos(0, 0),
     z(Z.ui),
     {
       draw() {
-        for (let t = 0; t < 3; t++) {
+        for (let t = 0; t < towers; t++) {
           const cx = x0 + spacing * (t + 0.5);
           const isTarget = t === sector.target;
           const hex = isTarget ? PAL.magenta : PAL.cyan;
           drawRect({ pos: vec2(cx, (top + bottom - 22) / 2), width: 4, height: bottom - top - 22, anchor: "center", color: hexC(hex), opacity: isTarget ? 0.9 : 0.5 });
-          drawRect({ pos: vec2(cx, bottom - 8), width: 96, height: 8, anchor: "center", radius: 3, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
-          drawText({ text: "NODE " + "ABC"[t], size: 16, pos: vec2(cx, bottom + 10), anchor: "center", color: hexC(isTarget ? PAL.magenta : PAL.chrome) });
-          if (isTarget) drawPill(cx, top - 4, "TARGET", PAL.magenta, 92);
+          drawRect({ pos: vec2(cx, bottom - 8), width: plateW, height: 8, anchor: "center", radius: 3, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
+          drawText({ text: "NODE " + NODE_LETTERS[t], size: 16, pos: vec2(cx, bottom + 10), anchor: "center", color: hexC(isTarget ? PAL.magenta : PAL.chrome) });
+          if (isTarget) drawPill(cx, top - 4, "TARGET", PAL.magenta, towers > 3 ? 74 : 92);
           const tower = sector.start[t] || [];
           tower.forEach((r, i) => {
             drawRingAt(cx, bottom - 18 - i * 12, r.size, n, r.type, { w: ringWidth(r.size) * 0.55, h: 10, chip: false });
@@ -1290,6 +1544,7 @@ function drawHazardBand(x, y, w, h, hex) {
 scene("play", () => {
   navBusy = false;
   ESC.until = -1;
+  tipHide();
   const run = SESSION.run;
   const sector = SESSION.sector;
   if (!run || !sector) { go("title"); return; }
@@ -1298,7 +1553,10 @@ scene("play", () => {
   SESSION.board = board;
   SESSION.t0 = time();
   const nowT = () => time() - SESSION.t0;
-  const target = clampN(sector.target | 0, 0, 2);
+  const towers = sector.towerCount || board.towers.length || 3;
+  const target = clampN(sector.target | 0, 0, towers - 1);
+  const RELAY_X = Array.from({ length: towers }, (_, i) => relayX(i, towers));
+  const plateW = Math.min(176, LOGIC_W / (towers + 1) - 8);
   const boss = !!sector.isBoss;
   const total = sector.rings.length;
   const timed = sector.timeLimit != null;
@@ -1366,7 +1624,7 @@ scene("play", () => {
   }
 
   // ----- relay hit areas (pointer) -----
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < towers; i++) {
     const hit = add([
       rect(120, BASE_Y - RELAY_TOP + 60),
       pos(RELAY_X[i], (RELAY_TOP - 20 + BASE_Y + 40) / 2),
@@ -1383,7 +1641,7 @@ scene("play", () => {
 
   // ----- actions -----
   function pickRelay(i) {
-    if (ps.busy || ps.done) return;
+    if (ps.busy || ps.done || i < 0 || i >= towers) return;
     if (ps.sel < 0) {
       if (board.towers[i].length === 0) {
         sfxSoft();
@@ -1598,25 +1856,17 @@ scene("play", () => {
     if (isSel) hex = PAL.lime;
     if (hinted) hex = PAL.amber;
     const glow = (isHover ? 1.7 : 1) * (isTarget ? 0.8 + 0.4 * pulse : 1);
-    const h = BASE_Y - RELAY_TOP;
-    const cy = RELAY_TOP + h / 2;
-
-    [[54, 0.04], [34, 0.06], [20, 0.09]].forEach(([w, a]) => {
-      drawRect({ pos: vec2(x, cy), width: w, height: h + 6, anchor: "center", radius: w / 2, color: hexC(hex), opacity: a * glow });
+    drawRelayTube(x, hex, {
+      glow,
+      plateW,
+      label: "NODE " + NODE_LETTERS[i],
+      labelHex: isTarget ? PAL.magenta : PAL.chrome,
+      halo: isTarget ? { r: 58 + pulse * 6, op: 0.03 + 0.03 * pulse, hex: PAL.magenta } : null,
     });
-    drawRect({ pos: vec2(x, cy), width: 12, height: h, anchor: "center", radius: 6, color: hexC(PAL.tube), opacity: 1 });
-    drawRect({ pos: vec2(x, cy), width: 3, height: h - 6, anchor: "center", radius: 2, color: hexC(hex), opacity: 0.95 });
-    drawCircle({ pos: vec2(x, RELAY_TOP - 3), radius: 6, color: hexC(hex), opacity: 0.6 * glow });
-    if (isTarget) {
-      drawCircle({ pos: vec2(x, BASE_Y + 7), radius: 58 + pulse * 6, color: hexC(PAL.magenta), opacity: 0.03 + 0.03 * pulse });
-    }
-    drawRect({ pos: vec2(x, BASE_Y + 7), width: 176, height: 14, anchor: "center", radius: 4, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
-    drawText({
-      text: "NODE " + "ABC"[i], size: 16, pos: vec2(x, BASE_Y + 28), anchor: "center",
-      color: hexC(isTarget ? PAL.magenta : PAL.chrome),
-    });
-    if (isTarget) drawPill(x, RELAY_TOP - 18, "TARGET", PAL.magenta, 92);
-    else if (isSource) drawPill(x, RELAY_TOP - 18, "SOURCE", PAL.cyan, 92);
+    const tagW = towers > 3 ? 78 : 92;
+    if (isTarget) drawPill(x, RELAY_TOP - 18, "TARGET", PAL.magenta, tagW);
+    else if (isSource) drawPill(x, RELAY_TOP - 18, "SOURCE", PAL.cyan, tagW);
+    if (sector.reversed) drawPill(x, RELAY_TOP + 26, "REVERSE", PAL.gold, tagW);
   }
 
   function drawHintArrow(from, to) {
@@ -1638,12 +1888,17 @@ scene("play", () => {
     z(Z.board),
     {
       draw() {
-        for (let i = 0; i < 3; i++) drawRelay(i);
+        for (let i = 0; i < towers; i++) drawRelay(i);
         if (ps.hint && time() < ps.hint.until) drawHintArrow(ps.hint.from, ps.hint.to);
         for (const v of ps.views.values()) {
           const isTop = v.i === topOf(v.t);
-          const dim = sector.fog && !isTop && !v.anim;
-          drawRingAt(v.x, v.y, v.size, total, v.type, { opacity: dim ? 0.32 : 1 });
+          if (sector.fog && !isTop) {
+            // Fog (DESIGN 13.4): a buried ring is as wide as its tower's top ring and shows no number.
+            const topRing = board.towers[v.t][topOf(v.t)];
+            drawRingAt(v.x, v.y, v.size, total, v.type, { fog: true, w: topRing ? ringWidth(topRing.size) : undefined });
+          } else {
+            drawRingAt(v.x, v.y, v.size, total, v.type);
+          }
         }
       },
     },
@@ -1730,7 +1985,7 @@ scene("play", () => {
           color: hexC(allDone ? PAL.lime : PAL.white), outline: { width: 2, color: hexC(PAL.ink) },
         });
         drawText({
-          text: "1 2 3 RELAY   U UNDO x" + (run.undoCharges || 0) + "   H HINT x" + (run.hintsLeft || 0) + "   ESC ABORT",
+          text: (towers > 3 ? "1 2 3 4" : "1 2 3") + " RELAY   U UNDO x" + (run.undoCharges || 0) + "   H HINT x" + (run.hintsLeft || 0) + "   ESC ABORT",
           size: 16, pos: vec2(884, LOGIC_H - 22), anchor: "topright", color: hexC(PAL.chrome), outline: { width: 2, color: hexC(PAL.ink) },
         });
 
@@ -1760,16 +2015,482 @@ scene("play", () => {
     },
   ]);
 
+  // ----- in-play modifier chips (fixed, bottom left). Hovering one shows its tooltip. -----
+  (sector.modifiers || []).forEach((id, k) => {
+    const hex = MODIFIER_HEX[id] || PAL.cyan;
+    const def = (HanoiCore.MODIFIERS || []).find((m) => m.id === id);
+    const cx = 92 + k * 160;
+    const cy = 456;
+    add([
+      rect(150, 20, { radius: 10 }), pos(cx, cy), anchor("center"), fixed(),
+      color(hexC(PAL.ink)), opacity(0.92), outline(2, hexC(hex)), z(Z.hud),
+    ]);
+    txt((def ? def.name : titleOf(id)).toUpperCase(), cx, cy, { size: 16, hex, stroke: 2, z: Z.hud + 1, fixed: true });
+    tipZone(cx, cy, 150, 22, () => modTip(id), { anchor: "center", fixed: true });
+  });
+
   // ----- keys -----
   onKeyPress("1", () => pickRelay(0));
   onKeyPress("2", () => pickRelay(1));
   onKeyPress("3", () => pickRelay(2));
+  onKeyPress("4", () => pickRelay(3));
   onKeyPress("u", doUndo);
   onKeyPress("h", doHint);
   onKeyPress("escape", () => {
     if (ps.done) return;
     escPress();
   });
+});
+
+// ---------- shared drawing: relay tube and ball ----------
+// One relay in NEON RELAY style: glow halo, dark tube, neon core, cap and base plate.
+function drawRelayTube(x, hex, o = {}) {
+  const glow = o.glow ?? 1;
+  const h = BASE_Y - RELAY_TOP;
+  const cy = RELAY_TOP + h / 2;
+  [[54, 0.04], [34, 0.06], [20, 0.09]].forEach(([w, a]) => {
+    drawRect({ pos: vec2(x, cy), width: w, height: h + 6, anchor: "center", radius: w / 2, color: hexC(hex), opacity: a * glow });
+  });
+  drawRect({ pos: vec2(x, cy), width: 12, height: h, anchor: "center", radius: 6, color: hexC(PAL.tube), opacity: 1 });
+  drawRect({ pos: vec2(x, cy), width: 3, height: h - 6, anchor: "center", radius: 2, color: hexC(hex), opacity: 0.95 });
+  drawCircle({ pos: vec2(x, RELAY_TOP - 3), radius: 6, color: hexC(hex), opacity: 0.6 * glow });
+  if (o.halo) drawCircle({ pos: vec2(x, BASE_Y + 7), radius: o.halo.r, color: hexC(o.halo.hex), opacity: o.halo.op });
+  drawRect({ pos: vec2(x, BASE_Y + 7), width: o.plateW ?? 176, height: 14, anchor: "center", radius: 4, color: hexC(PAL.plate), opacity: 1, outline: { width: 2, color: hexC(hex) } });
+  drawText({ text: o.label || "", size: 16, pos: vec2(x, BASE_Y + 28), anchor: "center", color: hexC(o.labelHex ?? PAL.chrome) });
+}
+
+// A ball in a Ball Sort tube: dark rim, coloured body, small glint.
+function drawBall(x, y, hex, op = 1) {
+  drawCircle({ pos: vec2(x, y), radius: 21, color: hexC(PAL.ink), opacity: 0.55 * op });
+  drawCircle({ pos: vec2(x, y), radius: 19, color: hexC(hex), opacity: op });
+  drawCircle({ pos: vec2(x - 6, y - 6), radius: 5, color: hexC(PAL.white), opacity: 0.45 * op });
+}
+
+// Result card for a finished bonus game: the bits paid, a summary and CONTINUE to the reward screen.
+function showBonusResult({ title, hex, bits, lines = [] }) {
+  const cx = 450;
+  const cy = 262;
+  add([
+    rect(440, 236, { radius: 14 }), pos(cx, cy), anchor("center"), color(hexC(PAL.ink)), opacity(0.96),
+    outline(3, hexC(hex)), z(Z.pop + 1), fixed(),
+  ]);
+  txt(title, cx, cy - 86, { size: 28, hex, stroke: 4, z: Z.pop + 2, fixed: true });
+  txt("+" + fmt(bits) + " BITS", cx, cy - 38, { size: 40, hex: PAL.gold, stroke: 5, z: Z.pop + 2, fixed: true });
+  lines.forEach((line, i) => txt(line, cx, cy + 6 + i * 22, { size: 16, hex: PAL.chrome, stroke: 2, width: 400, z: Z.pop + 2, fixed: true }));
+  const btn = add([
+    rect(240, 40, { radius: 10 }), pos(cx, cy + 90), anchor("center"), color(hexC(PAL.ink)), opacity(0.96),
+    outline(2, hexC(hex)), area(), z(Z.pop + 2), fixed(),
+  ]);
+  txt("CONTINUE", cx, cy + 90, { size: 20, hex, stroke: 3, z: Z.pop + 3, fixed: true });
+  let leaving = false;
+  const toReward = () => {
+    if (leaving) return;
+    leaving = true;
+    sfxClick();
+    navigate("reward");
+  };
+  btn.onHover(() => { btn.color = hexC("#15122e"); });
+  btn.onHoverEnd(() => { btn.color = hexC(PAL.ink); });
+  btn.onClick(toReward);
+  onKeyPress("enter", toReward);
+  onKeyPress("space", toReward);
+  sfxArpeggio(true);
+}
+
+// Ball Sort rejection reasons, as the player reads them.
+const SORT_REASON = {
+  full: "TUBE FULL", mismatch: "COLOUR MISMATCH", empty: "EMPTY TUBE", same: "SAME TUBE", range: "NO SUCH TUBE", solved: "ALREADY SORTED",
+};
+
+// ---------- bonus: ball sort (DESIGN 13.5) ----------
+// Click a tube to lift its top ball, then click the tube to pour it in. Keys 1-7 pick tubes, H hints.
+scene("sort", () => {
+  navBusy = false;
+  ESC.until = -1;
+  tipHide();
+  const run = SESSION.run;
+  if (!run) { go("title"); return; }
+  const board = HanoiCore.createBallSort(run);
+  SESSION.bonus = board;
+  const tubeN = board.tubes.length;
+  const CAP = board.capacity;
+
+  addDotGrid(PAL.violet);
+  addOverlay();
+
+  const TUBE_W = 58;
+  const TUBE_H = 8 + CAP * 46 + 8;
+  const TUBE_BOT = 380;
+  const TUBE_TOP = TUBE_BOT - TUBE_H;
+  const SPACING = Math.min(118, 800 / tubeN);
+  const tubeX = (t) => 450 + (t - (tubeN - 1) / 2) * SPACING;
+  const slotY = (i) => TUBE_BOT - 28 - i * 46;
+  const LIFT_Y = TUBE_TOP - 26;
+  const ballHex = (c) => BALL_HEX[c % BALL_HEX.length];
+
+  const ps = { sel: -1, busy: false, done: false, anim: null, hint: null, flash: -1, flashUntil: 0 };
+
+  add([
+    pos(0, 0), z(Z.board),
+    {
+      draw() {
+        for (let t = 0; t < tubeN; t++) {
+          const cx = tubeX(t);
+          const tube = board.tubes[t];
+          const picked = ps.sel === t;
+          const hinted = ps.hint && time() < ps.hint.until && (ps.hint.from === t || ps.hint.to === t);
+          const bad = ps.flash === t && time() < ps.flashUntil;
+          const edge = bad ? PAL.danger : picked ? PAL.lime : hinted ? PAL.amber : PAL.chrome;
+          drawRect({
+            pos: vec2(cx, TUBE_TOP + TUBE_H / 2), width: TUBE_W, height: TUBE_H, anchor: "center", radius: 14,
+            color: hexC(PAL.tube), opacity: 0.9, outline: { width: picked ? 3 : 2, color: hexC(edge) },
+          });
+          drawRect({ pos: vec2(cx - TUBE_W / 2 + 9, TUBE_TOP + TUBE_H / 2), width: 3, height: TUBE_H - 30, anchor: "center", radius: 2, color: hexC(PAL.white), opacity: 0.12 });
+          drawRect({ pos: vec2(cx, TUBE_BOT - 4), width: TUBE_W - 16, height: 3, anchor: "center", color: hexC(PAL.violet), opacity: 0.7 });
+          tube.forEach((c, i) => {
+            if (ps.anim && ps.anim.tube === t && ps.anim.idx === i) return;
+            const lifted = picked && i === tube.length - 1;
+            const y = lifted ? LIFT_Y : slotY(i);
+            if (lifted) drawCircle({ pos: vec2(cx, y), radius: 29, color: hexC(ballHex(c)), opacity: 0.22 });
+            drawBall(cx, y, ballHex(c));
+          });
+          drawText({ text: String(t + 1), size: 16, pos: vec2(cx, TUBE_BOT + 14), anchor: "center", color: hexC(picked ? PAL.lime : PAL.chrome) });
+        }
+        if (ps.anim) {
+          const a = ps.anim;
+          const e = a.p * a.p * (3 - 2 * a.p);
+          drawBall(a.x0 + (a.x1 - a.x0) * e, a.y0 + (a.y1 - a.y0) * e - Math.sin(Math.PI * a.p) * 36, ballHex(a.color));
+        }
+        if (ps.hint && time() < ps.hint.until) {
+          const x1 = tubeX(ps.hint.from);
+          const x2 = tubeX(ps.hint.to);
+          const y = 128;
+          const alpha = 0.55 + 0.35 * Math.sin(time() * 6);
+          drawLine({ p1: vec2(x1, y), p2: vec2(x2, y), width: 3, color: hexC(PAL.amber), opacity: alpha });
+          const dir = Math.sign(x2 - x1) || 1;
+          drawPolygon({ pts: [vec2(x2, y), vec2(x2 - dir * 12, y - 7), vec2(x2 - dir * 12, y + 7)], color: hexC(PAL.amber), opacity: alpha });
+          drawPill((x1 + x2) / 2, y - 16, "HINT", PAL.amber, 70);
+        }
+      },
+    },
+  ]);
+
+  // HUD band
+  add([
+    pos(0, 0), z(Z.hud), fixed(),
+    {
+      draw() {
+        drawRect({ pos: vec2(0, 0), width: LOGIC_W, height: HUD_BAND, color: hexC(PAL.ink), opacity: 0.86 });
+        drawRect({ pos: vec2(0, HUD_BAND), width: LOGIC_W, height: 1, color: hexC(PAL.violet), opacity: 0.6 });
+        drawText({ text: "BONUS // BALL SORT", size: 20, pos: vec2(16, 8), anchor: "topleft", color: hexC(PAL.violet), outline: { width: 3, color: hexC(PAL.ink) } });
+        drawText({ text: "BITS " + fmt(run.bits), size: 18, pos: vec2(884, 9), anchor: "topright", color: hexC(PAL.gold), outline: { width: 3, color: hexC(PAL.ink) } });
+        drawText({ text: "MOVES " + board.moves + "   INVALID " + board.invalidMoves, size: 16, pos: vec2(16, 38), anchor: "topleft", color: hexC(PAL.chrome), outline: { width: 2, color: hexC(PAL.ink) } });
+        drawText({ text: "POUR EACH COLOUR INTO ONE TUBE. NO PENALTY.", size: 16, pos: vec2(884, 38), anchor: "topright", color: hexC(PAL.dim), outline: { width: 2, color: hexC(PAL.ink) } });
+      },
+    },
+  ]);
+
+  const hintBtn = menuButton({ x: 450, y: 446, w: 160, h: 34, label: "HINT", neon: PAL.amber, size: 18, onPick: () => doHint() });
+  hintBtn.body.onHover(() => hintBtn.setFocus(true));
+  hintBtn.body.onHoverEnd(() => hintBtn.setFocus(false));
+  hintBtn.body.onClick(() => { if (hintBtn.body.isEnabled) doHint(); });
+  txt("1-" + tubeN + " PICK TUBE    H HINT    ESC TWICE FORFEIT", 16, 478, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+  addEscBanner(112, "PRESS ESC AGAIN TO FORFEIT THE BONUS");
+
+  function pickTube(t) {
+    if (ps.busy || ps.done || t < 0 || t >= tubeN) return;
+    if (ps.sel < 0) {
+      if (board.tubes[t].length === 0) {
+        sfxSoft();
+        pop("EMPTY", tubeX(t), TUBE_TOP - 16, PAL.chrome, 16);
+        return;
+      }
+      ps.sel = t;
+      sfxSelect();
+      return;
+    }
+    if (ps.sel === t) {
+      ps.sel = -1;
+      sfxSoft();
+      return;
+    }
+    const from = ps.sel;
+    const res = board.tryMove(from, t);
+    if (!res.ok) {
+      // A refused pour keeps the lifted ball, so the player can pick another tube.
+      sfxInvalid();
+      GLITCH.level = 0.5;
+      ps.flash = t;
+      ps.flashUntil = time() + 0.4;
+      pop(SORT_REASON[res.reason] || "NOT ALLOWED", tubeX(t), TUBE_TOP - 16, PAL.danger, 18);
+      return;
+    }
+    ps.sel = -1;
+    ps.hint = null;
+    const idx = board.tubes[t].length - 1;
+    ps.busy = true;
+    ps.anim = { tube: t, idx, color: res.color, x0: tubeX(from), y0: LIFT_Y, x1: tubeX(t), y1: slotY(idx), p: 0 };
+    tw(0, 1, 0.26, (p) => { if (ps.anim) ps.anim.p = p; }, easings.linear, () => {
+      ps.anim = null;
+      ps.busy = false;
+      sfxMove();
+      if (res.events.indexOf("tube-complete") >= 0) {
+        sfxLand();
+        sparks(tubeX(t), slotY(CAP - 1), ballHex(res.color), 12, 150);
+      }
+      if (res.solved) finishSort();
+    });
+  }
+
+  function doHint() {
+    if (ps.busy || ps.done) return;
+    const h = board.hint();
+    if (!h) {
+      sfxSoft();
+      pop("NOTHING TO SORT", 450, 300, PAL.chrome, 20);
+      return;
+    }
+    ps.hint = { from: h.from, to: h.to, until: time() + 3 };
+    sfxHint();
+  }
+
+  function finishSort() {
+    if (ps.done) return;
+    ps.done = true;
+    ps.sel = -1;
+    const res = HanoiCore.finishBonus(run, board);
+    shockwave(450, 280, PAL.lime, 420, 0.9);
+    sparks(450, 260, PAL.lime, 16, 220);
+    sfxUpgrade();
+    wait(1.1, () => showBonusResult({
+      title: "BALL SORT SOLVED", hex: PAL.lime, bits: res ? res.bits : 0,
+      lines: ["MOVES " + board.moves + "   INVALID " + board.invalidMoves, "NEW UPGRADE OFFER  //  AT LEAST ONE RARE"],
+    }));
+  }
+
+  function forfeit() {
+    if (ps.done) return;
+    ps.done = true;
+    HanoiCore.declineBonus(run);
+    sfxSoft();
+    navigate("reward");
+  }
+
+  for (let t = 0; t < Math.min(tubeN, 7); t++) onKeyPress(String(t + 1), () => pickTube(t));
+  onKeyPress("h", doHint);
+  onKeyPress("escape", () => { if (!ps.done) bonusEscPress(forfeit); });
+});
+
+// ---------- bonus: cipher (DESIGN 13.5) ----------
+// Mastermind with the rings: each ring's relay is its peg. SUBMIT scores the guess; 8 guesses to break the code.
+const CIPHER_RX = [130, 290, 450];
+const CIPHER_HEX = [PAL.cyan, PAL.lime, PAL.magenta];
+
+scene("cipher", () => {
+  navBusy = false;
+  ESC.until = -1;
+  tipHide();
+  const run = SESSION.run;
+  if (!run) { go("title"); return; }
+  const game = HanoiCore.createCipher(run);
+  SESSION.bonus = game;
+  const board = game.board;
+  const RX = CIPHER_RX;
+  const RINGS = 4;
+
+  addDotGrid(PAL.violet);
+  addOverlay();
+
+  const slotY = (i) => BASE_Y - 4 - RING_H / 2 - i * STACK_STEP;
+  const ps = { sel: -1, busy: false, done: false, anim: null };
+
+  add([
+    pos(0, 0), z(Z.board),
+    {
+      draw() {
+        for (let t = 0; t < 3; t++) {
+          const sel = ps.sel === t;
+          drawRelayTube(RX[t], sel ? PAL.lime : CIPHER_HEX[t], {
+            glow: sel ? 1.5 : 1, plateW: 120, label: "NODE " + NODE_LETTERS[t], labelHex: CIPHER_HEX[t],
+          });
+        }
+        board.towers.forEach((tower, t) => tower.forEach((r, i) => {
+          if (ps.anim && ps.anim.size === r.size) return;
+          const lifted = ps.sel === t && i === tower.length - 1;
+          drawRingAt(RX[t], slotY(i) - (lifted ? LIFT : 0), r.size, RINGS, r.type);
+        }));
+        if (ps.anim) {
+          const a = ps.anim;
+          const e = a.p * a.p * (3 - 2 * a.p);
+          drawRingAt(a.x0 + (a.x1 - a.x0) * e, a.y0 + (a.y1 - a.y0) * e - Math.sin(Math.PI * a.p) * 30, a.size, RINGS, a.type);
+        }
+      },
+    },
+  ]);
+
+  // HUD band: title and guess count, then the secret (hidden until the game ends)
+  const secret = () => (game.finished ? game.secret : null);
+  add([
+    pos(0, 0), z(Z.hud), fixed(),
+    {
+      draw() {
+        drawRect({ pos: vec2(0, 0), width: LOGIC_W, height: HUD_BAND, color: hexC(PAL.ink), opacity: 0.86 });
+        drawRect({ pos: vec2(0, HUD_BAND), width: LOGIC_W, height: 1, color: hexC(PAL.violet), opacity: 0.6 });
+        drawText({ text: "BONUS // CIPHER", size: 20, pos: vec2(16, 8), anchor: "topleft", color: hexC(PAL.violet), outline: { width: 3, color: hexC(PAL.ink) } });
+        drawText({ text: "GUESS " + game.guesses.length + " / " + game.maxGuesses, size: 18, pos: vec2(884, 9), anchor: "topright", color: hexC(PAL.gold), outline: { width: 3, color: hexC(PAL.ink) } });
+        drawText({ text: "SECRET", size: 16, pos: vec2(16, 42), anchor: "topleft", color: hexC(PAL.chrome), outline: { width: 2, color: hexC(PAL.ink) } });
+        const s = secret();
+        for (let k = 0; k < RINGS; k++) {
+          const x = 116 + k * 40;
+          if (s) drawCircle({ pos: vec2(x, 48), radius: 11, color: hexC(CIPHER_HEX[s[k]]), opacity: 1 });
+          else {
+            drawCircle({ pos: vec2(x, 48), radius: 11, color: hexC(PAL.steel), opacity: 1 });
+            drawText({ text: "?", size: 16, pos: vec2(x, 48), anchor: "center", color: hexC(PAL.dim) });
+          }
+        }
+        drawText({ text: "SUBMIT WHEN READY. EIGHT GUESSES.", size: 16, pos: vec2(884, 42), anchor: "topright", color: hexC(PAL.dim), outline: { width: 2, color: hexC(PAL.ink) } });
+      },
+    },
+  ]);
+
+  // Guess history: one row per guess, pegs in ring order (smallest first), feedback on the right.
+  const HX = 520;
+  const HY = 84;
+  const HW = 364;
+  const HH = 346;
+  const ROW0 = HY + 34;
+  const ROW_STEP = 34;
+  add([
+    pos(0, 0), z(Z.ui),
+    {
+      draw() {
+        drawRect({ pos: vec2(HX, HY), width: HW, height: HH, anchor: "topleft", radius: 10, color: hexC(PAL.ink), opacity: 0.9, outline: { width: 2, color: hexC(PAL.violet) } });
+        drawText({ text: "GUESS HISTORY", size: 16, pos: vec2(HX + 14, HY + 9), anchor: "topleft", color: hexC(PAL.violet) });
+        drawText({ text: "RINGS 1-4", size: 16, pos: vec2(HX + 186, HY + 9), anchor: "topleft", color: hexC(PAL.dim) });
+        for (let r = 0; r < game.maxGuesses; r++) {
+          const y = ROW0 + r * ROW_STEP;
+          const row = game.guesses[r];
+          drawText({ text: String(r + 1).padStart(2, "0"), size: 16, pos: vec2(HX + 14, y), anchor: "left", color: hexC(row ? PAL.white : PAL.steel) });
+          for (let k = 0; k < RINGS; k++) {
+            const x = HX + 70 + k * 26;
+            if (row) drawCircle({ pos: vec2(x, y), radius: 9, color: hexC(CIPHER_HEX[row.guess[k]]), opacity: 1 });
+            else drawCircle({ pos: vec2(x, y), radius: 9, color: hexC(PAL.steel), opacity: 0.6 });
+          }
+          if (row) {
+            // Feedback: black pegs first, then white, in a 2 x 2 grid.
+            for (let k = 0; k < RINGS; k++) {
+              const col = k % 2;
+              const rowIdx = Math.floor(k / 2);
+              const x = HX + 200 + col * 18;
+              const yy = y - 8 + rowIdx * 16;
+              if (k < row.black) drawCircle({ pos: vec2(x, yy), radius: 6, color: hexC(PAL.white), opacity: 1 });
+              else if (k < row.black + row.white) {
+                drawCircle({ pos: vec2(x, yy), radius: 6, color: hexC(PAL.chrome), opacity: 1 });
+                drawCircle({ pos: vec2(x, yy), radius: 3.5, color: hexC(PAL.ink), opacity: 1 });
+              } else drawCircle({ pos: vec2(x, yy), radius: 2.5, color: hexC(PAL.steel), opacity: 1 });
+            }
+          }
+        }
+        drawText({ text: "BLACK    ring on its secret relay", size: 16, pos: vec2(HX + 14, HY + HH - 46), anchor: "topleft", color: hexC(PAL.white) });
+        drawText({ text: "HOLLOW   secret relay, another ring", size: 16, pos: vec2(HX + 14, HY + HH - 24), anchor: "topleft", color: hexC(PAL.chrome) });
+      },
+    },
+  ]);
+
+  function pickRelay(t) {
+    if (ps.busy || ps.done || t < 0 || t > 2) return;
+    if (ps.sel < 0) {
+      if (board.towers[t].length === 0) {
+        sfxSoft();
+        pop("EMPTY", RX[t], BASE_Y - 60, PAL.chrome, 16);
+        return;
+      }
+      ps.sel = t;
+      sfxSelect();
+      return;
+    }
+    if (ps.sel === t) {
+      ps.sel = -1;
+      sfxSoft();
+      return;
+    }
+    const from = ps.sel;
+    const res = board.tryMove(from, t);
+    if (!res.ok) {
+      // Cipher moves have no penalty: a refused move only says why.
+      sfxSoft();
+      pop(res.reason === "size" ? "TOO LARGE" : "NOT ALLOWED", RX[t], RELAY_TOP + 40, PAL.chrome, 16);
+      return;
+    }
+    ps.sel = -1;
+    const lift = board.towers[from].length;
+    ps.busy = true;
+    ps.anim = { size: res.ring.size, type: res.ring.type, x0: RX[from], y0: slotY(lift) - LIFT, x1: RX[t], y1: slotY(board.towers[t].length - 1), p: 0 };
+    tw(0, 1, 0.24, (p) => { if (ps.anim) ps.anim.p = p; }, easings.linear, () => {
+      ps.anim = null;
+      ps.busy = false;
+      sfxMove();
+    });
+  }
+
+  function doSubmit() {
+    if (ps.busy || ps.done || game.finished) return;
+    const res = game.submit();
+    if (!res) return;
+    sfxTick();
+    const rowY = ROW0 + (game.guesses.length - 1) * ROW_STEP;
+    pop("BLACK " + res.black + "  WHITE " + res.white, HX + 160, rowY - 22, PAL.white, 16);
+    if (game.finished) finishCipher();
+  }
+
+  function finishCipher() {
+    if (ps.done) return;
+    ps.done = true;
+    ps.sel = -1;
+    setItemEnabled(submitBtn, false, PAL.lime);
+    const res = HanoiCore.finishBonus(run, game);
+    if (game.solved) {
+      shockwave(450, 280, PAL.lime, 420, 0.9);
+      sparks(450, 250, PAL.lime, 16, 220);
+      sfxUpgrade();
+    } else {
+      screenFlash(PAL.danger, 0.4, 0.8);
+      GLITCH.level = 0.9;
+      sfxGameOver();
+    }
+    const code = game.secret.map((v) => NODE_LETTERS[v]).join(" ");
+    wait(1.1, () => showBonusResult({
+      title: game.solved ? "SIGNAL DECODED" : "CIPHER LOCKED",
+      hex: game.solved ? PAL.lime : PAL.danger,
+      bits: res ? res.bits : 0,
+      lines: [
+        "SECRET  " + code + "   (RING 1 TO RING 4)",
+        game.solved ? "SOLVED IN " + game.guesses.length + " OF " + game.maxGuesses + " GUESSES" : "NO GUESSES LEFT. CONSOLATION PAID.",
+        "NEW UPGRADE OFFER  //  AT LEAST ONE RARE",
+      ],
+    }));
+  }
+
+  function forfeit() {
+    if (ps.done) return;
+    ps.done = true;
+    HanoiCore.declineBonus(run);
+    sfxSoft();
+    navigate("reward");
+  }
+
+  const submitBtn = menuButton({ x: 760, y: 458, w: 220, h: 34, label: "SUBMIT GUESS", neon: PAL.lime, size: 18, onPick: () => doSubmit() });
+  submitBtn.body.onHover(() => submitBtn.setFocus(true));
+  submitBtn.body.onHoverEnd(() => submitBtn.setFocus(false));
+  submitBtn.body.onClick(() => { if (submitBtn.body.isEnabled) doSubmit(); });
+  txt("1 2 3 RELAY    ENTER SUBMIT    ESC TWICE FORFEIT", 16, 478, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+  addEscBanner(112, "PRESS ESC AGAIN TO FORFEIT THE BONUS");
+
+  onKeyPress("1", () => pickRelay(0));
+  onKeyPress("2", () => pickRelay(1));
+  onKeyPress("3", () => pickRelay(2));
+  onKeyPress("enter", () => doSubmit());
+  onKeyPress("escape", () => { if (!ps.done) bonusEscPress(forfeit); });
 });
 
 // ---------- sector clear ----------
@@ -1864,10 +2585,11 @@ scene("clear", (args) => {
   bindMenu([cont]);
 });
 
-// ---------- reward: upgrade cards, reroll, repair, build ----------
+// ---------- reward: upgrade cards, reroll, repair, bonus, build ----------
 scene("reward", () => {
   navBusy = false;
   ESC.until = -1;
+  tipHide();
   const run = SESSION.run;
   if (!run) { go("title"); return; }
   const sector = SESSION.sector;
@@ -1929,13 +2651,19 @@ scene("reward", () => {
     cardItems.push(item);
   });
 
-  // Reroll and repair
+  // Bottom row: REROLL, BONUS (only when run.bonusOffer is set, DESIGN 13.6) and REPAIR.
+  const bonus = run.bonusOffer && run.bonusOffer.kind ? run.bonusOffer : null;
+  const btnW = bonus ? 180 : 200;
   const rerollItem = menuButton({
-    x: 250, y: 440, w: 200, h: 40, label: "", neon: PAL.amber, size: 18,
+    x: bonus ? 130 : 250, y: 440, w: btnW, h: 40, label: "", neon: PAL.amber, size: 18,
     onPick: () => doReroll(),
   });
+  const bonusItem = bonus ? menuButton({
+    x: 330, y: 440, w: 180, h: 40, label: "BONUS: " + (bonus.kind === "cipher" ? "CIPHER" : "SORT"), neon: PAL.violet, size: 18,
+    onPick: () => startBonus(bonus.kind),
+  }) : null;
   const repairItem = menuButton({
-    x: 490, y: 440, w: 200, h: 40, label: "", neon: PAL.lime, size: 18,
+    x: bonus ? 530 : 490, y: 440, w: btnW, h: 40, label: "", neon: PAL.lime, size: 18,
     onPick: () => doRepair(),
   });
   const refreshButtons = () => {
@@ -1948,7 +2676,7 @@ scene("reward", () => {
     wallet.text = "BITS " + fmt(run.bits) + "   INTEGRITY " + run.integrity + " / " + run.maxIntegrity;
   };
   const wallet = txt("", 40, 478, { anchor: "left", align: "left", size: 18, hex: PAL.gold, stroke: 3 });
-  const bindItems = [...cardItems, rerollItem, repairItem];
+  const bindItems = [...cardItems, rerollItem, ...(bonusItem ? [bonusItem] : []), repairItem];
   bindMenu(bindItems);
   refreshButtons();
 
@@ -1965,29 +2693,37 @@ scene("reward", () => {
   });
   if (owned.length > 9) txt("+" + (owned.length - 9) + " MORE", bx, 166 + 9 * 22, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2 });
 
+  // Forecast (upgrade 'forecast'): each modifier and the quest is a hover target with its tooltip.
   if ((run.upgrades && run.upgrades.forecast) > 0 && run.nextPlan) {
     const plan = run.nextPlan;
     const fy = 370;
-    add([rect(220, 96, { radius: 10 }), pos(bx, fy), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.9), outline(2, hexC(PAL.amber)), z(Z.ui)]);
+    add([rect(220, 104, { radius: 10 }), pos(bx, fy), anchor("topleft"), color(hexC(PAL.ink)), opacity(0.9), outline(2, hexC(PAL.amber)), z(Z.ui)]);
     txt("FORECAST  SECTOR " + pad2((run.sectorNo || 0) + 1), bx + 12, fy + 12, { anchor: "left", align: "left", size: 16, hex: PAL.amber, stroke: 2 });
     // Core plan shape: { no, modifierIds, ringTypes, questIds }
-    const modNames = (plan.modifierIds || []).map((id) => {
+    const mods = plan.modifierIds || [];
+    if (!mods.length) txt("No modifiers", bx + 12, fy + 34, { anchor: "left", align: "left", size: 16, hex: PAL.dim, stroke: 2 });
+    mods.forEach((id, k) => {
+      const y = fy + 34 + k * 18;
       const def = (HanoiCore.MODIFIERS || []).find((m) => m.id === id);
-      return def ? def.name : titleOf(id);
+      txt(def ? def.name : titleOf(id), bx + 12, y, { anchor: "left", align: "left", size: 16, hex: MODIFIER_HEX[id] || PAL.white, stroke: 2, width: 200 });
+      tipZone(bx + 6, y - 9, 208, 18, () => modTip(id), {});
     });
-    const mods = modNames.join(", ");
-    txt(mods || "No modifiers", bx + 12, fy + 36, { anchor: "left", align: "left", size: 16, hex: PAL.white, stroke: 2, width: 200 });
-    const qDef = (plan.questIds || []).length ? (HanoiCore.QUESTS || []).find((q) => q.id === plan.questIds[0]) : null;
-    const qn = qDef ? qDef.name : "";
-    txt(qn ? "Quest: " + qn : "", bx + 12, fy + 70, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2, width: 200 });
+    const qid = (plan.questIds || [])[0];
+    const qDef = qid ? (HanoiCore.QUESTS || []).find((q) => q.id === qid) : null;
+    if (qDef) {
+      const y = fy + 34 + Math.max(1, mods.length) * 18 + 6;
+      txt("Quest: " + qDef.name, bx + 12, y, { anchor: "left", align: "left", size: 16, hex: PAL.chrome, stroke: 2, width: 200 });
+      tipZone(bx + 6, y - 9, 208, 18, () => questTip({ id: qDef.id, name: qDef.name }, PAL.amber), {});
+    }
   }
 
-  txt("1 2 3 PICK    R REROLL    P REPAIR    ESC ABORT", 884, 22, { anchor: "right", align: "right", size: 16, hex: PAL.dim, stroke: 2 });
+  txt((bonus ? "1 2 3 PICK    R REROLL    B BONUS    P REPAIR    ESC ABORT" : "1 2 3 PICK    R REROLL    P REPAIR    ESC ABORT"), 884, 22, { anchor: "right", align: "right", size: 16, hex: PAL.dim, stroke: 2 });
   onKeyPress("1", () => takeOffer(ids[0]));
   onKeyPress("2", () => takeOffer(ids[1]));
   onKeyPress("3", () => takeOffer(ids[2]));
   onKeyPress("r", () => doReroll());
   onKeyPress("p", () => doRepair());
+  onKeyPress("b", () => { if (bonus) startBonus(bonus.kind); });
   onKeyPress("escape", escPress);
   addEscBanner(112);
 
@@ -2003,6 +2739,12 @@ scene("reward", () => {
     sfxUpgrade();
     if (cx !== undefined) sparks(cx, cy, (RARITY[(def && def.rarity) || "common"] || RARITY.common).hex, 16, 180);
     navigate("intro");
+  }
+
+  // Bonus games reuse the run's bits and integrity rules; they never touch integrity (DESIGN 13.5).
+  function startBonus(kind) {
+    if (navBusy) return;
+    navigate(kind === "cipher" ? "cipher" : "sort");
   }
 
   function doReroll() {
