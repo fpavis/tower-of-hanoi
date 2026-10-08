@@ -133,9 +133,10 @@ function saveStore() {
 }
 const STORE = loadStore();
 
+// UTC calendar date, so every player gets the same daily board (matches core's todaySeed).
 function todaySeed() {
   const d = new Date();
-  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
 }
 function recordKey(modeId, asc, seed) {
   if (modeId === "daily") return "daily:" + seed + (asc ? "+asc" : "");
@@ -1715,7 +1716,14 @@ scene("play", () => {
     }
     ps.combo = 1;
     ps.sel = -1;
+    if (ev.indexOf("revive") >= 0) revivePop();
     if (run.over) onFailed();
+  }
+
+  function revivePop() {
+    sfxRevive();
+    screenFlash(PAL.lime, 0.4, 0.6);
+    pop("PHOENIX REVIVE", 450, 300, PAL.lime, 28);
   }
 
   function handleEvents(res, to) {
@@ -1751,11 +1759,7 @@ scene("play", () => {
       }
       ps.combo = res.comboMult;
     }
-    if (has("revive")) {
-      sfxRevive();
-      screenFlash(PAL.lime, 0.4, 0.6);
-      pop("PHOENIX REVIVE", 450, 300, PAL.lime, 28);
-    }
+    if (has("revive")) revivePop();
     if (has("dead")) {
       screenFlash(PAL.danger, 0.45, 0.7);
       shake(16);
@@ -1766,7 +1770,12 @@ scene("play", () => {
   function doUndo() {
     if (ps.busy || ps.done) return;
     const before = snapLocs();
-    board.undo();
+    const res = board.undo();
+    if (!res || !res.ok) {
+      sfxSoft();
+      pop(res && res.reason === "nothing" ? "NOTHING TO UNDO" : "NO UNDO LEFT", 450, 300, PAL.chrome, 20);
+      return;
+    }
     const after = snapLocs();
     const moved = [];
     after.forEach((loc, id) => {
@@ -1808,7 +1817,7 @@ scene("play", () => {
 
   function doTimeout() {
     const before = run.integrity;
-    board.timeout(nowT());
+    const res = board.timeout(nowT());
     ps.sel = -1;
     ps.timeoutCool = time() + 0.6;
     syncViews();
@@ -1817,6 +1826,7 @@ scene("play", () => {
     shake(10);
     pop("TIME OUT  -1 INTEGRITY", 450, 300, PAL.danger, 24);
     if (run.integrity < before) ps.pipFlash = 1;
+    if (((res && res.events) || []).indexOf("revive") >= 0) revivePop();
     if (run.over) onFailed();
   }
 
