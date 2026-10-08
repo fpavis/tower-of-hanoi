@@ -277,7 +277,7 @@ Note: a perfect solver in standard mode has no integrity risk, so the Optimal ro
 
 ### 13.1 Modes (added to §2.3)
 - `peg4` — **Quad Relay**: four towers instead of three. Ring counts and modifiers as standard. Target tower is 1, 2 or 3 (rolled per sector). Par via the same Dijkstra solver over four towers. Keys `1`–`4` select relays.
-- `reverse` — **Reverse Protocol**: the stacking rule is inverted. A ring may rest only on a **larger** ring (or on an empty tower, or on a ghost). Start layout: tower 0 bottom→top = sizes 1…n (smallest at the bottom). Goal: the same order on the target tower. Mathematically the same puzzle as standard with sizes flipped, so par equals standard par.
+- `reverse` — **Reverse Protocol**: the stacking rule is inverted. A ring may rest only on a **smaller** ring (or on an empty tower, or on a ghost). This is the standard rule with the size comparison flipped, so the start layout below is legal. Start layout: tower 0 bottom→top = sizes 1…n (smallest at the bottom). Goal: the same order on the target tower. Mathematically the same puzzle as standard with sizes flipped, so par equals standard par.
 
 Mode fields gain `towerCount` (3 or 4) and `reversed` (bool). Standard, blitz, endless and daily keep `towerCount: 3, reversed: false`.
 

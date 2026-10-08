@@ -9,6 +9,11 @@ const {
   MODES,
   UPGRADES,
   MODIFIERS,
+  QUESTS,
+  createBallSort,
+  createCipher,
+  finishBonus,
+  declineBonus,
   makeRng,
   createRun,
   sectorConfig,
@@ -69,7 +74,7 @@ function handBoard(towers, opts) {
     ringCount: rings.length,
     start: towers,
     target,
-    par: parOf(towers, target),
+    par: parOf(towers, target, { reversed: Boolean(sector.reversed) }),
     no: o.no === undefined ? 1 : o.no,
     timeLimit: o.timeLimit === undefined ? null : o.timeLimit,
   });
@@ -857,5 +862,568 @@ test('full standard run, hint-played, never throws and reaches a terminal state'
     }
     assert.equal(run.over, true);
     assert.equal(run.victory, true);
+  }
+});
+
+// ------------------------------------------------------------------ v2 helpers
+
+// Every ring on `index` of a `count`-tower layout, largest at the bottom.
+function allOnTowerOf(rings, index, count) {
+  const towers = Array.from({ length: count }, () => []);
+  towers[index] = rings.slice().reverse();
+  return towers;
+}
+
+// Bottom to top, with the stacking rule of the given direction.
+function legalTowerFor(tower, reversed) {
+  for (let i = 1; i < tower.length; i += 1) {
+    const below = tower[i - 1];
+    const above = tower[i];
+    const fits = reversed ? above.size > below.size : above.size < below.size;
+    if (!(fits || above.type === 'ghost' || below.type === 'ghost')) return false;
+  }
+  return true;
+}
+
+// Plays a Ball Sort board to solved with its hints. Returns the move count.
+function playBallSort(board) {
+  let moves = 0;
+  while (!board.isSolved()) {
+    assert.ok(moves < 500, 'ball sort loop guard');
+    const step = board.hint();
+    assert.ok(step, 'hint exists while unsolved');
+    assert.equal(board.tryMove(step.from, step.to).ok, true);
+    moves += 1;
+  }
+  return moves;
+}
+
+// Smallest ring on each relay (the top of a standard stack), or null.
+function relayTops(assign) {
+  const tops = [null, null, null];
+  assign.forEach((relay, i) => {
+    const size = i + 1;
+    if (tops[relay] === null || size < tops[relay]) tops[relay] = size;
+  });
+  return tops;
+}
+
+// Moves the rings of a cipher guess board until ring size i + 1 sits on relay
+// target[i]. A plain BFS finds the path, and every move is then applied to the
+// real board, so the real rules are what get checked. Returns the move count.
+function buildGuess(game, target) {
+  const current = [];
+  game.board.towers.forEach((tower, relay) => tower.forEach((r) => { current[r.size - 1] = relay; }));
+  const goalKey = target.join('');
+  const prev = new Map([[current.join(''), null]]);
+  const frontier = [current];
+  while (frontier.length > 0 && !prev.has(goalKey)) {
+    const state = frontier.shift();
+    const key = state.join('');
+    const tops = relayTops(state);
+    for (let from = 0; from < 3; from += 1) {
+      for (let to = 0; to < 3; to += 1) {
+        if (from === to || tops[from] === null) continue;
+        if (tops[to] !== null && tops[from] > tops[to]) continue;
+        const next = state.map((relay, i) => (i + 1 === tops[from] ? to : relay));
+        const nextKey = next.join('');
+        if (prev.has(nextKey)) continue;
+        prev.set(nextKey, { from: key, move: [from, to] });
+        frontier.push(next);
+      }
+    }
+  }
+  assert.ok(prev.has(goalKey), 'guess is reachable');
+  const moves = [];
+  let key = goalKey;
+  while (prev.get(key)) {
+    const step = prev.get(key);
+    moves.unshift(step.move);
+    key = step.from;
+  }
+  moves.forEach(([from, to]) => {
+    assert.equal(game.board.tryMove(from, to, 0).ok, true, 'guess move is legal');
+  });
+  return moves.length;
+}
+
+// Ball Sort runs keep the same run object shape; only sectorNo matters here.
+function ballRun(sectorNo) {
+  const run = createRun({ mode: 'standard', seed: 21 });
+  run.sectorNo = sectorNo;
+  return run;
+}
+
+// ------------------------------------------------------------------ v2: modes
+
+test('v2 modes: peg4 and reverse are defined; the older modes keep three towers', () => {
+  assert.equal(MODES.peg4.towerCount, 4);
+  assert.equal(MODES.peg4.reversed, false);
+  assert.equal(MODES.peg4.name, 'Quad Relay');
+  assert.equal(MODES.reverse.towerCount, 3);
+  assert.equal(MODES.reverse.reversed, true);
+  assert.equal(MODES.reverse.name, 'Reverse Protocol');
+  ['standard', 'blitz', 'endless', 'daily'].forEach((id) => {
+    assert.equal(MODES[id].towerCount, 3, id);
+    assert.equal(MODES[id].reversed, false, id);
+  });
+  assert.equal(createRun({ mode: 'peg4', seed: 2 }).mode, 'peg4');
+  assert.equal(createRun({ mode: 'reverse', seed: 2 }).mode, 'reverse');
+});
+
+test('peg4 sectors: four towers, target 1 to 3, same ring counts as standard', () => {
+  assert.deepEqual(sectorsFor('peg4', 12, 9).map((s) => s.ringCount), [3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 7]);
+  const targets = new Set();
+  for (let seed = 1; seed <= 12; seed += 1) {
+    sectorsFor('peg4', 12, seed).forEach((s) => {
+      assert.equal(s.towerCount, 4);
+      assert.equal(s.start.length, 4);
+      assert.equal(s.reversed, false);
+      assert.ok([1, 2, 3].includes(s.target));
+      targets.add(s.target);
+      assert.ok(s.start.every((tower) => legalTowerFor(tower, false)));
+      assert.equal(s.start.reduce((n, tower) => n + tower.length, 0), s.rings.length);
+      assert.ok(s.start[s.target].length < s.rings.length, 'start is not solved');
+      if (!s.scramble) assert.equal(s.start[0].length, s.rings.length);
+    });
+  }
+  assert.deepEqual([...targets].sort(), [1, 2, 3], 'every target relay is used');
+});
+
+test('reverse sectors: tower 0 holds 1..n bottom to top, and every layout is reversed-legal', () => {
+  const first = sectorConfig(createRun({ mode: 'reverse', seed: 9 }));
+  assert.equal(first.reversed, true);
+  assert.deepEqual(first.start[0].map((r) => r.size), first.rings.map((r) => r.size));
+  for (let seed = 1; seed <= 12; seed += 1) {
+    sectorsFor('reverse', 12, seed).forEach((s) => {
+      assert.equal(s.towerCount, 3);
+      assert.ok([1, 2].includes(s.target));
+      assert.ok(s.start.every((tower) => legalTowerFor(tower, true)), `seed ${seed} sector ${s.no}`);
+      assert.equal(s.start.reduce((n, tower) => n + tower.length, 0), s.rings.length);
+      assert.ok(s.start[s.target].length < s.rings.length, 'start is not solved');
+      if (!s.scramble) assert.deepEqual(s.start[0].map((r) => r.size), s.rings.map((r) => r.size));
+    });
+  }
+});
+
+// ------------------------------------------------------------------ v2: towers and par
+
+test('Board range check: 3 and 4 tower boards reject bad indices with reason range', () => {
+  const peg = handBoard([[ring(3), ring(2), ring(1)], [], [], []], { mode: 'peg4', target: 3 });
+  assert.equal(peg.board.towers.length, 4);
+  assert.deepEqual(peg.board.canMove(0, 3), { ok: true }, 'tower 3 exists on peg4');
+  assert.equal(peg.board.canMove(0, 4).reason, 'range');
+  assert.equal(peg.board.canMove(-1, 0).reason, 'range');
+  assert.equal(peg.board.canMove(4, 0).reason, 'range');
+  const res = peg.board.tryMove(0, 4, 0);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'range');
+  assert.equal(peg.board.stats.invalidMoves, 0);
+  assert.equal(peg.run.integrity, 3);
+
+  const tri = handBoard([[ring(3), ring(2), ring(1)], [], []]).board;
+  assert.equal(tri.canMove(0, 3).reason, 'range', 'tower 3 does not exist on a 3-tower board');
+});
+
+test('Board range check: junk indices are range errors and never throw', () => {
+  const { run, board } = handBoard([[ring(3), ring(2), ring(1)], [], []]);
+  [NaN, Infinity, -1, 1.5, '0', null, undefined, {}].forEach((v) => {
+    assert.equal(board.canMove(v, 0).reason, 'range', String(v));
+    assert.equal(board.canMove(0, v).reason, 'range', String(v));
+    assert.equal(board.tryMove(0, v, 0).reason, 'range', String(v));
+    assert.equal(board.tryMove(v, 0, 0).reason, 'range', String(v));
+  });
+  assert.equal(run.integrity, 3);
+  assert.equal(board.stats.invalidMoves, 0);
+});
+
+test('parOf: the target must be a tower index for the tower count', () => {
+  const rings = makeRings(3);
+  assert.equal(parOf(allOnTowerOf(rings, 0, 4), 3), 5);
+  assert.throws(() => parOf(allOnTowerOf(rings, 0, 4), 4), RangeError);
+  assert.throws(() => parOf(allOnTowerOf(rings, 0, 3), 3), RangeError);
+});
+
+test('peg4 par: 3 rings from tower 0 to tower 3 is 5 (Frame-Stewart), not the 3-tower 7', () => {
+  const rings = makeRings(3);
+  assert.equal(parOf(allOnTowerOf(rings, 0, 4), 3), 5);
+  assert.equal(parOf(allOnTowerOf(rings, 0, 4), 1), 5);
+  assert.equal(parOf(allOnTowerOf(rings, 0, 4), 2), 5);
+  assert.equal(parOf(allOnTowerOf(rings, 0, 3), 2), 7);
+});
+
+test('peg4 par for 1 to 4 rings to tower 3 follows 1, 3, 5, 9', () => {
+  [1, 3, 5, 9].forEach((expected, i) => {
+    const rings = makeRings(i + 1);
+    assert.equal(parOf(allOnTowerOf(rings, 0, 4), 3), expected, `n=${i + 1}`);
+  });
+});
+
+test('reversed par: plain rings cost 2^n - 1, the same as standard', () => {
+  for (let n = 1; n <= 6; n += 1) {
+    const rings = makeRings(n);
+    const start = [rings.slice(), [], []]; // smallest at the bottom
+    assert.equal(parOf(start, 2, { reversed: true }), (2 ** n) - 1, `n=${n}`);
+    assert.equal(parOf(start, 1, { reversed: true }), (2 ** n) - 1, `n=${n} to tower 1`);
+  }
+});
+
+// ------------------------------------------------------------------ v2: reversed rule
+
+test('reversed legality: a ring rests only on a smaller ring; empty towers are always fine', () => {
+  const { board } = handBoard([[ring(1), ring(2)], [ring(3)], []], { mode: 'reverse' });
+  assert.deepEqual(board.canMove(1, 0), { ok: true }, '3 onto 2 is legal');
+  assert.equal(board.canMove(0, 1).reason, 'size', '2 onto 3 is not');
+  assert.deepEqual(board.canMove(0, 2), { ok: true }, 'empty tower is always legal');
+  assert.equal(board.canMove(1, 1).reason, 'same');
+});
+
+test('reversed legality: ghosts bypass the size rule as mover or as target top', () => {
+  const ghostOnto = handBoard([[ring(1), ring(2)], [ring(3, 'ghost')], []], { mode: 'reverse' }).board;
+  assert.deepEqual(ghostOnto.canMove(0, 1), { ok: true }, 'anything may land on a ghost top');
+
+  const ghostMover = handBoard([[ring(1, 'ghost')], [ring(2)], [ring(3)]], { mode: 'reverse' }).board;
+  assert.deepEqual(ghostMover.canMove(0, 1), { ok: true }, 'a ghost may move anywhere');
+  assert.equal(ghostMover.canMove(1, 2).reason, 'size', 'ordinary rings still obey the rule');
+});
+
+test('reverse: a hint-played run costs exactly par in every sector and stays reversed-legal', () => {
+  const run = createRun({ mode: 'reverse', seed: 17 });
+  for (let no = 1; no <= 6; no += 1) {
+    const sector = sectorConfig(run);
+    const board = new Board(run, sector);
+    playWithHints(board, 0);
+    assert.equal(board.stats.cost, sector.par, `sector ${no}`);
+    assert.equal(board.stats.invalidMoves, 0);
+    assert.ok(board.towers.every((tower) => legalTowerFor(tower, true)));
+  }
+});
+
+// ------------------------------------------------------------------ v2: ball sort
+
+test('ball sort: solved means every colour in one tube and no tube mixed', () => {
+  const run = ballRun(3);
+  assert.equal(createBallSort(run, { tubes: [[0, 0, 0, 0], [1, 1, 1, 1], [], []] }).isSolved(), true);
+  assert.equal(createBallSort(run, { tubes: [[0, 0, 0], [1, 1, 1, 1], [0], []] }).isSolved(), false, 'colour 0 in two tubes');
+  assert.equal(createBallSort(run, { tubes: [[0, 0, 0, 1], [1, 1, 1, 0], [], []] }).isSolved(), false, 'mixed tubes');
+  assert.equal(createBallSort(run, { tubes: [[0, 0, 0, 0], [1, 1, 1, 1], [], []] }).finished, true);
+});
+
+test('ball sort: a legal move lands on a matching top or an empty tube, and reports tube-complete', () => {
+  const board = createBallSort(ballRun(3), { tubes: [[0, 0, 0, 1], [1, 1, 1], [0], []] });
+  assert.deepEqual(board.canMove(0, 1), { ok: true }, 'top 1 onto top 1');
+  const first = board.tryMove(0, 1);
+  assert.equal(first.ok, true);
+  assert.equal(first.color, 1);
+  assert.deepEqual(first.events, ['move', 'tube-complete']);
+  assert.equal(first.solved, false);
+  assert.deepEqual(board.tubes, [[0, 0, 0], [1, 1, 1, 1], [0], []]);
+  assert.deepEqual(board.canMove(2, 0), { ok: true }, 'top 0 onto top 0');
+  assert.deepEqual(board.canMove(0, 3), { ok: true }, 'top 0 onto an empty tube');
+  const last = board.tryMove(2, 0);
+  assert.deepEqual(last.events, ['move', 'tube-complete', 'solved']);
+  assert.equal(last.solved, true);
+  assert.equal(board.moves, 2);
+});
+
+test('ball sort: illegal moves change nothing, and only empty, full and mismatch count as invalid', () => {
+  const board = createBallSort(ballRun(3), { tubes: [[1, 0], [0, 0, 0, 0], [], [1, 1]], colors: 2 });
+  const before = JSON.stringify(board.tubes);
+  assert.equal(board.canMove(0, 1).reason, 'full');
+  assert.equal(board.canMove(0, 3).reason, 'mismatch');
+  assert.equal(board.canMove(2, 0).reason, 'empty');
+  assert.equal(board.canMove(0, 0).reason, 'same');
+  assert.equal(board.canMove(0, 9).reason, 'range');
+
+  assert.equal(board.tryMove(0, 3).events[0], 'invalid');
+  assert.equal(board.invalidMoves, 1);
+  assert.equal(board.tryMove(0, 0).events.length, 0, 'same tube is a free cancel');
+  assert.equal(board.tryMove(0, 9).events.length, 0, 'range is a free no-op');
+  assert.equal(board.invalidMoves, 1);
+  assert.equal(board.tryMove(2, 0).reason, 'empty');
+  assert.equal(board.invalidMoves, 2);
+  assert.equal(JSON.stringify(board.tubes), before);
+  assert.equal(board.moves, 0);
+});
+
+test('ball sort: colour and tube counts follow the sector, with colours capped at five', () => {
+  const expected = { 1: [3, 5], 2: [3, 5], 3: [4, 6], 5: [4, 6], 6: [5, 7], 12: [5, 7] };
+  Object.entries(expected).forEach(([no, [colors, tubes]]) => {
+    const board = createBallSort(ballRun(Number(no)));
+    assert.equal(board.colors, colors, `sector ${no} colours`);
+    assert.equal(board.tubes.length, tubes, `sector ${no} tubes`);
+    assert.equal(board.tubes.flat().length, colors * 4, 'four balls per colour');
+    assert.ok(board.tubes.every((tube) => tube.length <= 4));
+    assert.equal(board.isSolved(), false);
+  });
+});
+
+test('ball sort: generated starts are solvable and hint() plays each one to completion', () => {
+  for (const no of [3, 6]) {
+    for (let seed = 1; seed <= 4; seed += 1) {
+      const run = createRun({ mode: 'standard', seed });
+      run.sectorNo = no;
+      const board = createBallSort(run);
+      assert.equal(board.isSolved(), false, 'a generated start is not solved');
+      const moves = playBallSort(board);
+      assert.ok(moves >= 8, `sector ${no} seed ${seed} needs ${moves} moves`);
+      assert.equal(board.moves, moves);
+      assert.equal(board.invalidMoves, 0);
+      assert.equal(board.hint(), null, 'no hint once solved');
+    }
+  }
+});
+
+// ------------------------------------------------------------------ v2: cipher
+
+test('cipher feedback: hand-computed black and white counts', () => {
+  const cases = [
+    { secret: [0, 1, 2, 2], guess: [0, 1, 2, 2], black: 4, white: 0 },
+    { secret: [0, 1, 2, 2], guess: [1, 0, 2, 2], black: 2, white: 2 },
+    { secret: [0, 0, 1, 2], guess: [1, 1, 1, 1], black: 1, white: 0 },
+    { secret: [0, 0, 0, 1], guess: [1, 0, 0, 0], black: 2, white: 2 },
+    { secret: [0, 1, 1, 2], guess: [0, 0, 0, 0], black: 1, white: 0 },
+  ];
+  cases.forEach(({ secret, guess, black, white }) => {
+    const game = createCipher(createRun({ mode: 'standard', seed: 3 }), { secret });
+    buildGuess(game, guess);
+    const result = game.submit();
+    assert.equal(result.black, black, `black for ${guess} against ${secret}`);
+    assert.equal(result.white, white, `white for ${guess} against ${secret}`);
+    assert.deepEqual(result.guess, guess);
+  });
+});
+
+test('cipher: solving pays the formula, reveals the secret only after finishing, and then locks', () => {
+  const run = createRun({ mode: 'standard', seed: 5 });
+  run.sectorNo = 3;
+  const game = createCipher(run, { secret: [2, 0, 1, 1] });
+  assert.equal(game.secret, null);
+  buildGuess(game, [0, 0, 0, 0]);
+  game.submit();
+  assert.equal(game.solved, false);
+  assert.equal(game.secret, null, 'still hidden');
+
+  const moves = buildGuess(game, [2, 0, 1, 1]);
+  assert.ok(moves > 0);
+  const won = game.submit();
+  assert.equal(won.black, 4);
+  assert.equal(game.solved, true);
+  assert.equal(game.guessesUsed, 2);
+  assert.deepEqual(game.secret, [2, 0, 1, 1]);
+  assert.equal(game.guesses[1].moves, moves, 'moves are counted per guess');
+  // (40 + 10 x 3) x (8 - 2 + 1) / 8 = 61.25
+  assert.equal(game.reward(), 61);
+  assert.equal(game.submit(), null, 'no guess after a solve');
+  assert.equal(game.guessesUsed, 2);
+});
+
+test('cipher: a solve on the last guess pays the smallest share, and the first guess pays the full amount', () => {
+  const run = createRun({ mode: 'standard', seed: 5 });
+  run.sectorNo = 3;
+  const first = createCipher(run, { secret: [0, 1, 2, 2] });
+  buildGuess(first, [0, 1, 2, 2]);
+  first.submit();
+  assert.equal(first.reward(), 70, '(40 + 30) x 8 / 8');
+
+  const last = createCipher(run, { secret: [0, 1, 2, 2] });
+  for (let i = 0; i < 7; i += 1) {
+    buildGuess(last, [0, 0, 0, 0]);
+    last.submit();
+  }
+  buildGuess(last, [0, 1, 2, 2]);
+  last.submit();
+  assert.equal(last.guessesUsed, 8);
+  assert.equal(last.reward(), 9, '70 x 1 / 8 = 8.75, rounded');
+});
+
+test('cipher: eight guesses without a solve fails, pays the consolation, and reveals the secret', () => {
+  const run = createRun({ mode: 'standard', seed: 6 });
+  run.sectorNo = 6;
+  const game = createCipher(run, { secret: [0, 1, 2, 2] });
+  for (let i = 0; i < 8; i += 1) {
+    assert.equal(game.secret, null, 'hidden while playing');
+    buildGuess(game, [0, 0, 0, 0]);
+    game.submit();
+  }
+  assert.equal(game.failed, true);
+  assert.equal(game.solved, false);
+  assert.equal(game.reward(), 20, 'consolation');
+  assert.deepEqual(game.secret, [0, 1, 2, 2]);
+  assert.equal(game.submit(), null, 'no guess after a fail');
+});
+
+test('cipher board: illegal moves are no-ops and never touch the run', () => {
+  const run = createRun({ mode: 'standard', seed: 7 });
+  run.integrity = 2;
+  const snapshot = JSON.stringify({ integrity: run.integrity, bits: run.bits, stats: run.stats, over: run.over });
+  const game = createCipher(run, { secret: [0, 1, 2, 2] });
+  const layout = JSON.stringify(game.board.towers);
+  assert.equal(game.board.tryMove(0, 0).reason, 'same');
+  assert.equal(game.board.tryMove(1, 2).reason, 'empty');
+  assert.equal(game.board.tryMove(0, 5).reason, 'range');
+  assert.equal(game.board.moves, 0);
+  assert.equal(JSON.stringify(game.board.towers), layout);
+
+  assert.equal(game.board.tryMove(0, 1).ok, true, 'ring 1 onto the empty relay');
+  assert.equal(game.board.tryMove(0, 1).reason, 'size', 'ring 2 onto ring 1 is illegal');
+  assert.equal(game.board.moves, 1);
+  assert.equal(run.integrity, 2);
+  assert.equal(JSON.stringify({ integrity: run.integrity, bits: run.bits, stats: run.stats, over: run.over }), snapshot);
+});
+
+// ------------------------------------------------------------------ v2: bonus settlement
+
+test('finishBonus: a solved ball sort pays bits, offers a rare-or-better set, and never touches integrity', () => {
+  const run = ballRun(3);
+  run.integrity = 1;
+  run.bits = 10;
+  const board = createBallSort(run);
+  playBallSort(board);
+  const result = finishBonus(run, board);
+  assert.equal(result.bits, 30 + 8 * 3, 'ball sort pays 30 + 8 x sector');
+  assert.equal(run.bits, 10 + result.bits);
+  assert.equal(run.integrity, 1, 'integrity untouched');
+  assert.equal(result.offer.length, 3);
+  assert.equal(new Set(result.offer).size, 3);
+  assert.ok(result.offer.some((id) => ['rare', 'epic'].includes(rarityOf(id))));
+  assert.deepEqual(run.offer, result.offer);
+  assert.equal(finishBonus(run, board), null, 'a game pays once');
+});
+
+test('finishBonus: an unfinished ball sort pays nothing, a failed cipher pays the consolation', () => {
+  const run = createRun({ mode: 'standard', seed: 12 });
+  run.sectorNo = 6;
+  run.bits = 0;
+  const sortGame = createBallSort(run);
+  assert.equal(finishBonus(run, sortGame), null, 'abandoned ball sort is not paid');
+
+  const cipher = createCipher(run, { secret: [0, 1, 2, 2] });
+  assert.equal(finishBonus(run, cipher), null, 'a game in progress is not paid');
+  for (let i = 0; i < 8; i += 1) {
+    buildGuess(cipher, [0, 0, 0, 0]);
+    cipher.submit();
+  }
+  const result = finishBonus(run, cipher);
+  assert.equal(result.bits, 20);
+  assert.equal(run.bits, 20);
+  assert.ok(result.offer.some((id) => ['rare', 'epic'].includes(rarityOf(id))));
+});
+
+test('finishBonus: the rare guarantee survives a reroll, and a finished bonus clears the pending offer', () => {
+  const run = ballRun(6);
+  run.bits = 1e6;
+  run.bonusOffer = { kind: 'sort' };
+  const game = createBallSort(run);
+  playBallSort(game);
+  assert.ok(finishBonus(run, game));
+  assert.equal(run.bonusOffer, null, 'a finished bonus clears the pending offer');
+  for (let i = 0; i < 30; i += 1) {
+    const offer = reroll(run);
+    assert.ok(offer, 'reroll affordable');
+    assert.ok(offer.some((id) => ['rare', 'epic'].includes(rarityOf(id))), `reroll ${i} keeps a rare`);
+  }
+});
+
+test('declineBonus: clears a pending offer and reports whether one existed; taking a card clears it too', () => {
+  const run = createRun({ mode: 'standard', seed: 13 });
+  run.bonusOffer = { kind: 'cipher' };
+  assert.equal(declineBonus(run), true);
+  assert.equal(run.bonusOffer, null);
+  assert.equal(declineBonus(run), false);
+
+  run.bonusOffer = { kind: 'sort' };
+  assert.ok(takeCard(run, rewardOffer(run)[0]));
+  assert.equal(run.bonusOffer, null, 'taking a card closes the bonus option');
+});
+
+test('bonus offer: none in sectors 1-2 or on boss sectors, about 30% elsewhere, reproducible by seed', () => {
+  const offersFor = (seed) => {
+    const run = createRun({ mode: 'standard', seed });
+    const seen = [];
+    for (let no = 1; no <= 8; no += 1) {
+      const sector = sectorConfig(run);
+      const board = new Board(run, sector);
+      finishSector(run, board, playWithHints(board, 0));
+      seen.push({ no, boss: sector.isBoss, kind: run.bonusOffer ? run.bonusOffer.kind : null });
+    }
+    return seen;
+  };
+  let eligible = 0;
+  let offered = 0;
+  const kinds = new Set();
+  for (let seed = 1; seed <= 150; seed += 1) {
+    offersFor(seed).forEach(({ no, boss, kind }) => {
+      if (no < 3 || boss) {
+        assert.equal(kind, null, `sector ${no} (boss ${boss}) never offers a bonus`);
+        return;
+      }
+      eligible += 1;
+      if (kind) {
+        offered += 1;
+        kinds.add(kind);
+      }
+    });
+  }
+  const rate = offered / eligible;
+  assert.ok(rate > 0.25 && rate < 0.35, `bonus rate ${rate.toFixed(3)} is near 30%`);
+  assert.deepEqual([...kinds].sort(), ['cipher', 'sort']);
+  assert.deepEqual(offersFor(42), offersFor(42), 'same seed, same bonus offers');
+});
+
+// ------------------------------------------------------------------ v2: descriptions
+
+test('descriptions: modifiers and quests have a one-sentence desc and a detail of at most two sentences', () => {
+  const sentences = (text) => (text.match(/[.!?](\s|$)/g) || []).length;
+  MODIFIERS.concat(QUESTS).forEach((entry) => {
+    assert.equal(typeof entry.desc, 'string', `${entry.id} desc`);
+    assert.equal(typeof entry.detail, 'string', `${entry.id} detail`);
+    assert.equal(sentences(entry.desc), 1, `${entry.id} desc is one sentence`);
+    assert.ok(sentences(entry.detail) >= 1 && sentences(entry.detail) <= 2, `${entry.id} detail is one or two sentences`);
+  });
+});
+
+test('descriptions: every upgrade has a detail sentence that explains its effect', () => {
+  UPGRADES.forEach((card) => {
+    assert.equal(typeof card.detail, 'string', `${card.id} detail`);
+    assert.ok(card.detail.length > card.desc.length / 2, `${card.id} detail is not a stub`);
+    assert.ok(card.detail.endsWith('.'), `${card.id} detail ends with a full stop`);
+    assert.ok((card.detail.match(/[.!?](\s|$)/g) || []).length <= 2, `${card.id} detail is short`);
+  });
+});
+
+// ------------------------------------------------------------------ v2: smoke
+
+function playRunToEnd(mode, seed) {
+  const run = createRun({ mode, seed });
+  let guard = 0;
+  while (!run.over && guard < 20) {
+    guard += 1;
+    const sector = sectorConfig(run);
+    if (!sector) break;
+    const board = new Board(run, sector);
+    const t = playWithHints(board, 0);
+    assert.equal(board.stats.cost, sector.par, `${mode} seed ${seed} sector ${sector.no} costs par`);
+    const result = finishSector(run, board, t);
+    assert.ok(result);
+    const offer = rewardOffer(run);
+    if (offer && offer.length > 0) takeCard(run, offer[0]);
+  }
+  return run;
+}
+
+test('smoke: full peg4 run, hint-played, reaches victory with every sector at par', () => {
+  for (const seed of [1, 2]) {
+    const run = playRunToEnd('peg4', seed);
+    assert.equal(run.victory, true, `seed ${seed}`);
+    assert.equal(run.sectorsCleared, 12);
+  }
+});
+
+test('smoke: full reverse run, hint-played, reaches victory with every sector at par', () => {
+  for (const seed of [1, 2]) {
+    const run = playRunToEnd('reverse', seed);
+    assert.equal(run.victory, true, `seed ${seed}`);
+    assert.equal(run.sectorsCleared, 12);
   }
 });
