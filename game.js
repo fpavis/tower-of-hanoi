@@ -2070,6 +2070,7 @@ function drawBall(x, y, hex, op = 1) {
 function showBonusResult({ title, hex, bits, lines = [] }) {
   const cx = 450;
   const cy = 262;
+  add([rect(LOGIC_W, LOGIC_H), pos(0, 0), fixed(), color(hexC(PAL.bg)), opacity(0.6), z(Z.pop)]);
   add([
     rect(440, 236, { radius: 14 }), pos(cx, cy), anchor("center"), color(hexC(PAL.ink)), opacity(0.96),
     outline(3, hexC(hex)), z(Z.pop + 1), fixed(),
@@ -2189,6 +2190,12 @@ scene("sort", () => {
       },
     },
   ]);
+
+  // Tube hit areas: a click picks a tube, or pours the lifted ball into it.
+  for (let t = 0; t < tubeN; t++) {
+    const hit = add([rect(TUBE_W + 26, TUBE_H + 40), pos(tubeX(t), TUBE_TOP + TUBE_H / 2 - 16), anchor("center"), opacity(0), area(), z(Z.relay)]);
+    hit.onClick(() => pickTube(t));
+  }
 
   const hintBtn = menuButton({ x: 450, y: 446, w: 160, h: 34, label: "HINT", neon: PAL.amber, size: 18, onPick: () => doHint() });
   hintBtn.body.onHover(() => hintBtn.setFocus(true));
@@ -2365,14 +2372,15 @@ scene("cipher", () => {
     {
       draw() {
         drawRect({ pos: vec2(HX, HY), width: HW, height: HH, anchor: "topleft", radius: 10, color: hexC(PAL.ink), opacity: 0.9, outline: { width: 2, color: hexC(PAL.violet) } });
-        drawText({ text: "GUESS HISTORY", size: 16, pos: vec2(HX + 14, HY + 9), anchor: "topleft", color: hexC(PAL.violet) });
-        drawText({ text: "RINGS 1-4", size: 16, pos: vec2(HX + 186, HY + 9), anchor: "topleft", color: hexC(PAL.dim) });
+        drawText({ text: "#", size: 16, pos: vec2(HX + 14, HY + 9), anchor: "topleft", color: hexC(PAL.violet) });
+        drawText({ text: "PEGS RINGS 1-4", size: 16, pos: vec2(HX + 44, HY + 9), anchor: "topleft", color: hexC(PAL.violet) });
+        drawText({ text: "FEEDBACK", size: 16, pos: vec2(HX + 214, HY + 9), anchor: "topleft", color: hexC(PAL.violet) });
         for (let r = 0; r < game.maxGuesses; r++) {
           const y = ROW0 + r * ROW_STEP;
           const row = game.guesses[r];
           drawText({ text: String(r + 1).padStart(2, "0"), size: 16, pos: vec2(HX + 14, y), anchor: "left", color: hexC(row ? PAL.white : PAL.steel) });
           for (let k = 0; k < RINGS; k++) {
-            const x = HX + 70 + k * 26;
+            const x = HX + 50 + k * 26;
             if (row) drawCircle({ pos: vec2(x, y), radius: 9, color: hexC(CIPHER_HEX[row.guess[k]]), opacity: 1 });
             else drawCircle({ pos: vec2(x, y), radius: 9, color: hexC(PAL.steel), opacity: 0.6 });
           }
@@ -2381,7 +2389,7 @@ scene("cipher", () => {
             for (let k = 0; k < RINGS; k++) {
               const col = k % 2;
               const rowIdx = Math.floor(k / 2);
-              const x = HX + 200 + col * 18;
+              const x = HX + 222 + col * 22;
               const yy = y - 8 + rowIdx * 16;
               if (k < row.black) drawCircle({ pos: vec2(x, yy), radius: 6, color: hexC(PAL.white), opacity: 1 });
               else if (k < row.black + row.white) {
@@ -2477,6 +2485,12 @@ scene("cipher", () => {
     HanoiCore.declineBonus(run);
     sfxSoft();
     navigate("reward");
+  }
+
+  // Relay hit areas, same shape as the main board's.
+  for (let t = 0; t < 3; t++) {
+    const hit = add([rect(120, BASE_Y - RELAY_TOP + 60), pos(RX[t], (RELAY_TOP - 20 + BASE_Y + 40) / 2), anchor("center"), opacity(0), area(), z(Z.relay)]);
+    hit.onClick(() => pickRelay(t));
   }
 
   const submitBtn = menuButton({ x: 760, y: 458, w: 220, h: 34, label: "SUBMIT GUESS", neon: PAL.lime, size: 18, onPick: () => doSubmit() });
