@@ -555,8 +555,9 @@ function addOverlay() {
   ]);
 }
 
+// Built after kaplay() has defined loadSprite (see the Kaplay setup below).
 let vignetteReady = false;
-(function buildVignette() {
+function buildVignette() {
   try {
     const cv = document.createElement("canvas");
     cv.width = 256;
@@ -573,7 +574,7 @@ let vignetteReady = false;
   } catch (e) {
     vignetteReady = false;
   }
-})();
+}
 
 // Synthwave floor with a scrolling perspective grid, a striped sun and drifting neon disks.
 function drawSun(cx, H, R) {
@@ -881,6 +882,7 @@ kaplay({
   touchToMouse: true,
   debug: false,
 });
+buildVignette();
 
 // ---------- title ----------
 scene("title", () => {
