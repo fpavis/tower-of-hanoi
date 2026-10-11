@@ -467,7 +467,6 @@ const HanoiCore = (function () {
       detail: 'Once per run, if integrity would drop to zero you survive at 2 integrity instead. A second death ends the run as normal.',
       apply(run) {
         run.phoenixCharges += 1;
-        run.mods.phoenixCharges += 1;
       },
     },
     {
@@ -976,7 +975,6 @@ const HanoiCore = (function () {
       momentum: false,
       timeMult: 1,
       sizeBits: false,
-      phoenixCharges: 0,
       sRankHeal: 0,
       sRankMult: 1,
       curseBitMult: 1,
@@ -1606,71 +1604,241 @@ const HanoiCore = (function () {
     return tubes;
   }
 
-  // Draws deals from run.rng until one is solvable (checked by the BFS) and at
-  // least BALL_SORT_MIN_SOLVE moves from solved. If no deal in the attempt budget
-  // is deep enough, the deepest solvable one is used. Random legal play from the
-  // solved state was measured to stay about two moves from solved, so it is not
-  // used as the generator.
+  // Draws deals from run.rng until one is solvable and at least BALL_SORT_MIN_SOLVE
+  // moves from solved. A bounded search rules out any solution under the minimum.
+  // A greedy search then only has to find some solution, and anything it finds is
+  // already long enough. If no deal in the attempt budget is deep enough, the
+  // deepest solvable one is used. Random legal play from the solved state was
+  // measured to stay about two moves from solved, so it is not used as the generator.
   function sortGenerate(rng, colors, capacity) {
     let best = null;
     for (let attempt = 0; attempt < BALL_SORT_DEAL_ATTEMPTS || best === null; attempt += 1) {
       const tubes = sortDeal(rng, colors, capacity);
-      const path = sortSolve(tubes, colors, capacity);
-      if (path === null) continue;
-      if (path.length >= BALL_SORT_MIN_SOLVE) return tubes;
-      if (best === null || path.length > best.length) best = { tubes, length: path.length };
+      const short = sortSolve(tubes, colors, capacity, { maxDepth: BALL_SORT_MIN_SOLVE - 1 });
+      if (short !== null) {
+        if (best === null || short.length > best.length) best = { tubes, length: short.length };
+        continue;
+      }
+      if (sortSolve(tubes, colors, capacity, { greedy: true }) !== null) return tubes;
     }
     return best.tubes;
-  }
-
-  // Colours are relabelled by first appearance, so layouts that differ only by a
-  // colour permutation share one search node. Tube moves stay valid because
-  // legality depends only on whether colours are equal.
-  function sortCanonical(tubes) {
-    const labels = new Map();
-    return tubes.map((tube) => tube.map((c) => {
-      if (!labels.has(c)) labels.set(c, labels.size);
-      return labels.get(c);
-    }));
   }
 
   function sortKey(tubes) {
     return tubes.map((tube) => tube.join('')).join('|');
   }
 
-  function sortPath(parent, goalKey) {
-    const path = [];
-    let key = goalKey;
-    while (parent.get(key)) {
-      const step = parent.get(key);
-      path.push({ from: step.from, to: step.to });
-      key = step.prev;
-    }
-    return path.reverse();
+  // Set of fixed-width integer rows in open addressing. add(row) returns true when
+  // the row was not there yet, and stores a copy of it.
+  function makeRowSet(width) {
+    let size = 1024;
+    let slots = new Int32Array(size).fill(-1);
+    const values = [];
+    let count = 0;
+    const hashOf = (row) => {
+      let h = 0x811c9dc5;
+      for (let k = 0; k < width; k += 1) h = Math.imul(h ^ row[k], 0x01000193);
+      return h;
+    };
+    const place = (row, index) => {
+      let slot = hashOf(row) & (size - 1);
+      while (slots[slot] !== -1) slot = (slot + 1) & (size - 1);
+      slots[slot] = index;
+    };
+    return {
+      add(row) {
+        let slot = hashOf(row) & (size - 1);
+        while (slots[slot] !== -1) {
+          const at = slots[slot] * width;
+          let same = true;
+          for (let k = 0; k < width && same; k += 1) same = values[at + k] === row[k];
+          if (same) return false;
+          slot = (slot + 1) & (size - 1);
+        }
+        slots[slot] = count;
+        for (let k = 0; k < width; k += 1) values.push(row[k]);
+        count += 1;
+        if (count * 2 > size) {
+          size *= 2;
+          slots = new Int32Array(size).fill(-1);
+          for (let i = 0; i < count; i += 1) place(values.slice(i * width, (i + 1) * width), i);
+        }
+        return true;
+      },
+    };
   }
 
-  // Breadth-first search for a shortest move list to a solved layout. Returns
-  // [] when already solved, or null if none is found.
-  function sortSolve(tubes, colors, capacity) {
-    if (sortSolved(tubes, colors)) return [];
-    const start = sortCanonical(tubes);
-    const startKey = sortKey(start);
-    const parent = new Map([[startKey, null]]);
-    const queue = [start];
-    for (let head = 0; head < queue.length; head += 1) {
-      const state = queue[head];
-      const key = sortKey(state);
-      for (let from = 0; from < state.length; from += 1) {
-        for (let to = 0; to < state.length; to += 1) {
-          if (sortRejection(state, from, to, capacity) !== null) continue;
-          const next = sortCanonical(sortApply(state, from, to));
-          const nextKey = sortKey(next);
-          if (parent.has(nextKey)) continue;
-          parent.set(nextKey, { prev: key, from, to });
-          if (sortSolved(next, colors)) return sortPath(parent, nextKey);
-          queue.push(next);
+  // Search over tube layouts. A tube packs into one number: digit i (base
+  // colors + 1) holds colour + 1 at height i, so an empty tube is 0 and the height
+  // is implicit. Layouts that differ by a colour relabelling or a reordering of the
+  // tubes share one node, because legal moves and the solved test are invariant
+  // under both. Nodes keep their real layout, so every move on a returned path is
+  // legal on the board.
+  //   opts.maxDepth: the longest path to look for. Null means none that short.
+  //   opts.greedy: best-first on a spread heuristic. The path is not shortest, but
+  //   the search is exhaustive either way, so null means no solution exists.
+  // Returns [] when already solved, otherwise the { from, to } moves, or null.
+  // Without opts the breadth-first path is shortest, which is what hint() needs.
+  function sortSolve(tubes, colors, capacity, opts) {
+    const greedy = Boolean(opts && opts.greedy);
+    const maxDepth = opts && opts.maxDepth !== undefined ? opts.maxDepth : Infinity;
+    const n = tubes.length;
+    const base = colors + 1;
+    const pow = [1];
+    for (let i = 1; i <= capacity; i += 1) pow.push(pow[i - 1] * base);
+    const heightOf = (code) => {
+      let h = 0;
+      while (pow[h] <= code) h += 1;
+      return h;
+    };
+
+    // Every colour in exactly one tube, and no tube mixed.
+    const used = new Uint8Array(base);
+    const isSolved = (codes) => {
+      used.fill(0);
+      let holders = 0;
+      for (let t = 0; t < n; t += 1) {
+        const code = codes[t];
+        if (code === 0) continue;
+        const h = heightOf(code);
+        const top = Math.floor(code / pow[h - 1]);
+        if (code !== top * (pow[h] - 1) / (base - 1)) return false;
+        if (used[top]) return false;
+        used[top] = 1;
+        holders += 1;
+      }
+      return holders === colors;
+    };
+
+    // Guidance only, never a bound: extra colours per tube plus extra tubes per
+    // colour. Greedy search tries the lowest-scoring layouts first, and a solved
+    // layout scores zero.
+    const stamp = new Int32Array(base);
+    const tubesWith = new Int32Array(base);
+    let mark = 0;
+    const spread = (codes) => {
+      tubesWith.fill(0);
+      let h = 0;
+      for (let t = 0; t < n; t += 1) {
+        mark += 1;
+        let v = codes[t];
+        let distinct = 0;
+        while (v > 0) {
+          const d = v % base;
+          v = (v - d) / base;
+          if (stamp[d] !== mark) { stamp[d] = mark; distinct += 1; tubesWith[d] += 1; }
+        }
+        if (distinct > 0) h += distinct - 1;
+      }
+      for (let d = 1; d < base; d += 1) if (tubesWith[d] > 0) h += tubesWith[d] - 1;
+      return h;
+    };
+
+    // Colours relabelled by first appearance, tubes sorted: the dedupe key.
+    const label = new Int32Array(base);
+    const canon = new Array(n);
+    const canonical = (codes) => {
+      label.fill(0);
+      let next = 1;
+      for (let t = 0; t < n; t += 1) {
+        let v = codes[t];
+        let packed = 0;
+        for (let i = 0; v > 0; i += 1) {
+          const d = v % base;
+          v = (v - d) / base;
+          if (label[d] === 0) { label[d] = next; next += 1; }
+          packed += label[d] * pow[i];
+        }
+        canon[t] = packed;
+      }
+      for (let i = 1; i < n; i += 1) {
+        const x = canon[i];
+        let j = i - 1;
+        while (j >= 0 && canon[j] > x) { canon[j + 1] = canon[j]; j -= 1; }
+        canon[j + 1] = x;
+      }
+      return canon;
+    };
+
+    const start = tubes.map((tube) => {
+      let code = 0;
+      tube.forEach((c, i) => { code += (c + 1) * pow[i]; });
+      return code;
+    });
+    if (isSolved(start)) return [];
+
+    const nodes = start.slice(); // n packed tubes per node, real layouts
+    const parent = [-1];
+    const moveFrom = [-1];
+    const moveTo = [-1];
+    const seen = makeRowSet(n);
+    seen.add(canonical(start));
+    const child = new Array(n);
+    const pathTo = (goal) => {
+      const path = [];
+      for (let k = goal; parent[k] >= 0; k = parent[k]) path.push({ from: moveFrom[k], to: moveTo[k] });
+      return path.reverse();
+    };
+
+    // Expands node src. Each new layout is recorded, then onNew(index) runs with
+    // its packed tubes in `child`. Returns the index of the first solved layout,
+    // or -1.
+    const expand = (src, onNew) => {
+      const at = src * n;
+      for (let from = 0; from < n; from += 1) {
+        const a = nodes[at + from];
+        if (a === 0) continue;
+        const ha = heightOf(a);
+        const top = Math.floor(a / pow[ha - 1]);
+        for (let to = 0; to < n; to += 1) {
+          if (to === from) continue;
+          const b = nodes[at + to];
+          let hb = 0;
+          if (b !== 0) {
+            hb = heightOf(b);
+            if (hb >= capacity || Math.floor(b / pow[hb - 1]) !== top) continue;
+          }
+          for (let k = 0; k < n; k += 1) child[k] = nodes[at + k];
+          child[from] = a - top * pow[ha - 1];
+          child[to] = b + top * pow[hb];
+          if (!seen.add(canonical(child))) continue;
+          const index = parent.length;
+          for (let k = 0; k < n; k += 1) nodes.push(child[k]);
+          parent.push(src);
+          moveFrom.push(from);
+          moveTo.push(to);
+          if (isSolved(child)) return index;
+          onNew(index);
         }
       }
+      return -1;
+    };
+
+    if (greedy) {
+      const buckets = [];
+      let cursor = 0;
+      const push = (index, h) => {
+        while (buckets.length <= h) buckets.push([]);
+        buckets[h].push(index);
+        if (h < cursor) cursor = h;
+      };
+      push(0, spread(start));
+      for (;;) {
+        while (cursor < buckets.length && buckets[cursor].length === 0) cursor += 1;
+        if (cursor === buckets.length) return null;
+        const goal = expand(buckets[cursor].pop(), (index) => push(index, spread(child)));
+        if (goal >= 0) return pathTo(goal);
+      }
+    }
+
+    let frontier = [0];
+    for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth += 1) {
+      const next = [];
+      for (let i = 0; i < frontier.length; i += 1) {
+        const goal = expand(frontier[i], (index) => next.push(index));
+        if (goal >= 0) return pathTo(goal);
+      }
+      frontier = next;
     }
     return null;
   }

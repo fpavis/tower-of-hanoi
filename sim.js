@@ -6,8 +6,11 @@
  *   node sim.js [--runs N] [--seed S] [--lift-runs L] [--daily YYYYMMDD]
  *
  * Plays full headless runs through core.js (HanoiCore) with three bots
- * (Optimal, Human, Random) in all four modes, prints a balance report and
- * writes the same text to sim-report.txt beside this file.
+ * (Optimal, Human, Random) in the four checked modes (standard, blitz,
+ * endless, daily), prints a balance report and writes the same text to
+ * sim-report.txt beside this file. peg4 (Quad Relay) and reverse (Reverse
+ * Protocol), DESIGN 13.1, are informational: Human bot only, listed in the
+ * outcome and end-reason tables, never part of a DESIGN 11 check.
  *
  * Determinism: every seed derives from --seed and the report holds no
  * wall-clock data, so identical arguments always produce an identical report.
@@ -37,6 +40,10 @@ const {
 // ---------------------------------------------------------------------------
 
 const MODE_IDS = ['standard', 'blitz', 'endless', 'daily'];
+/** Informational modes (DESIGN 13.1): Human bot only, no checks. */
+const INFO_MODE_IDS = ['peg4', 'reverse'];
+/** Seed index per mode. Info modes come last so the checked modes keep their seeds. */
+const ALL_MODE_IDS = [...MODE_IDS, ...INFO_MODE_IDS];
 const BOT_IDS = ['optimal', 'human', 'random'];
 
 /** moveSec: simulated seconds per click. A wrong click, undo or hint press
@@ -110,7 +117,7 @@ function checkPriorityLists() {
   check('human late', HUMAN_LATE, ids);
   check('optimal', OPTIMAL_ORDER, nonCurse);
   if (HanoiCore.MODES) {
-    const absent = MODE_IDS.filter((m) => !(m in HanoiCore.MODES) && m !== 'daily');
+    const absent = ALL_MODE_IDS.filter((m) => !(m in HanoiCore.MODES) && m !== 'daily');
     if (absent.length) apiNotes.push(`MODES lacks: ${absent.join(', ')}`);
   }
 }
@@ -229,8 +236,9 @@ function actOn(ctx, fn) {
 /** Board pairs (from, to) with from !== to, filtered by legality. */
 function pairs(board, wantLegal) {
   const list = [];
-  for (let from = 0; from < 3; from++) {
-    for (let to = 0; to < 3; to++) {
+  const n = board.towers.length;   // 3, or 4 in peg4
+  for (let from = 0; from < n; from++) {
+    for (let to = 0; to < n; to++) {
       if (from !== to && Boolean(board.canMove(from, to).ok) === wantLegal) list.push({ from, to });
     }
   }
@@ -244,8 +252,9 @@ function pairs(board, wantLegal) {
 function misclickCandidates(board) {
   const size = [];
   const free = [];
-  for (let from = 0; from < 3; from++) {
-    for (let to = 0; to < 3; to++) {
+  const n = board.towers.length;   // 3, or 4 in peg4
+  for (let from = 0; from < n; from++) {
+    for (let to = 0; to < n; to++) {
       if (from === to) continue;
       const c = board.canMove(from, to);
       if (c.ok) continue;
@@ -563,7 +572,7 @@ function playRun(modeId, botId, runSeed, botSeed, idx, force = null) {
 
 function runCombo(modeId, botId, count, seed, dailySeed) {
   const recs = [];
-  const m = MODE_IDS.indexOf(modeId);
+  const m = ALL_MODE_IDS.indexOf(modeId);
   const b = BOT_IDS.indexOf(botId);
   for (let i = 0; i < count; i++) {
     // Daily: every player gets the same dungeon; only the player's luck varies.
@@ -740,7 +749,8 @@ function buildReport(R, opts, ablation) {
     S[m] = {};
     for (const b of BOT_IDS) S[m][b] = summarize(R[m][b]);
   }
-  const std = R.standard.human;
+  const SI = {};                     // informational modes, Human bot only
+  for (const m of INFO_MODE_IDS) SI[m] = summarize(R[m].human);
   const lines = [];
   const add = (s = '') => lines.push(s);
 
@@ -754,16 +764,17 @@ function buildReport(R, opts, ablation) {
 
   // Outcomes
   add(section('1. Outcomes per mode and bot'));
+  const outRow = (label, botName, s) => [label, botName, s.n, pct(s.winRate), `+-${pct(s.winCI)}`,
+    num(s.medSector), num(s.meanSector), num(s.medMin), num(s.meanMin), s.stuck, s.exc];
   const outRows = [];
   for (const m of MODE_IDS) {
-    for (const b of BOT_IDS) {
-      const s = S[m][b];
-      outRows.push([m, BOT_SPEC[b].name, s.n, pct(s.winRate), `+-${pct(s.winCI)}`,
-        num(s.medSector), num(s.meanSector), num(s.medMin), num(s.meanMin), s.stuck, s.exc]);
-    }
+    for (const b of BOT_IDS) outRows.push(outRow(m, BOT_SPEC[b].name, S[m][b]));
   }
+  for (const m of INFO_MODE_IDS) outRows.push(outRow(`${m}*`, BOT_SPEC.human.name, SI[m]));
   add(table(['Mode', 'Bot', 'Runs', 'Win', '95CI', 'MedSect', 'MeanSect',
     'MedMin', 'MeanMin', 'Stuck', 'Exc'], outRows, 2));
+  add('* Informational (DESIGN 13.1): Human bot only, not a DESIGN 11 check. Stuck and Exc count'
+    + ' the stuck and exception runs of that row.');
 
   // Play and ratings
   add(section('2. Play, ratings and quests per mode and bot'));
@@ -782,12 +793,15 @@ function buildReport(R, opts, ablation) {
 
   // End reasons
   add(section('3. End reasons (run counts)'));
-  for (const m of MODE_IDS) {
-    for (const b of BOT_IDS) {
-      const ends = Object.entries(S[m][b].ends).sort((a, c) => (c[1] - a[1]) || a[0].localeCompare(c[0]));
-      add(`${m.padEnd(9)} ${BOT_SPEC[b].name.padEnd(8)} ${ends.map(([k, v]) => `${k} ${v}`).join(', ')}`);
-    }
+  const endRows = [
+    ...MODE_IDS.flatMap((m) => BOT_IDS.map((b) => [m, BOT_SPEC[b].name, S[m][b]])),
+    ...INFO_MODE_IDS.map((m) => [`${m}*`, BOT_SPEC.human.name, SI[m]]),
+  ];
+  for (const [label, botName, s] of endRows) {
+    const ends = Object.entries(s.ends).sort((a, c) => (c[1] - a[1]) || a[0].localeCompare(c[0]));
+    add(`${label.padEnd(9)} ${botName.padEnd(8)} ${ends.map(([k, v]) => `${k} ${v}`).join(', ')}`);
   }
+  add('* Informational, Human bot only (see section 1).');
 
   // Survival
   add(section('4. Survival curve, standard (fraction entering each sector)'));
@@ -1030,6 +1044,9 @@ function main() {
       const count = (m === 'standard' && b === 'human') ? Math.max(opts.runs, opts.liftRuns) : opts.runs;
       R[m][b] = runCombo(m, b, count, opts.seed, opts.daily);
     }
+  }
+  for (const m of INFO_MODE_IDS) {
+    R[m] = { human: runCombo(m, 'human', opts.runs, opts.seed, opts.daily) };
   }
   const ablation = {};
   for (const card of UPGRADES) {

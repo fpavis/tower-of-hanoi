@@ -334,3 +334,9 @@ Descriptions are data in core (`MODIFIERS[].desc`, `QUESTS[].desc`, `UPGRADES[].
 ### 13.9 Testing
 - Core: `node --test` (not `node --test test/`) must pass all tests, including new ones for peg4 par and Board range checks, reversed stacking legality and start layout, Ball Sort solvability and win, Cipher feedback (black/white against hand-computed examples) and reward.
 - Renderer: Playwright playtests for each new mode and both bonus games, with zero `pageerror`/`console.error`. Screenshots reviewed.
+
+### 13.10 Known balance items (after the v2 open-items pass)
+- **Quad Relay is much easier.** The informational sim row shows a human win rate of about 74 % (400 runs), against about 24 % for standard. The fourth tower shortens par (3 rings: 5 moves, not 7). Open: add a par penalty or a fourth-tower-only rule, or accept it as an easy mode.
+- **`phoenix_core` lift is +27 %**, and the only measured lever (no revive in the final sector) gives +17 %, still outside the band. Open design call.
+- **`reinforced` lift is +21 %.** Charging 1 integrity instead of forgiving drops the standard human win rate to 15 %, on the floor. Open design call.
+- **`forecast` and `greed_protocol`** stay out of the band by design: forecast is informational, and greed is a trap for players who never value bits.

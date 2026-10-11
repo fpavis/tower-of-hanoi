@@ -1174,6 +1174,19 @@ test('ball sort: generated starts are solvable and hint() plays each one to comp
   }
 });
 
+test('ball sort: 200 five-colour deals are all solvable, and none is solved in under eight moves', () => {
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const run = createRun({ mode: 'standard', seed });
+    run.sectorNo = 12;
+    const board = createBallSort(run);
+    assert.equal(board.colors, 5, `seed ${seed} colours`);
+    assert.equal(board.isSolved(), false, `seed ${seed} starts unsolved`);
+    // hint() follows an optimal path, so the moves it plays are the solve length.
+    const moves = playBallSort(board);
+    assert.ok(moves >= 8, `seed ${seed} needs ${moves} moves`);
+  }
+});
+
 // ------------------------------------------------------------------ v2: cipher
 
 test('cipher feedback: hand-computed black and white counts', () => {

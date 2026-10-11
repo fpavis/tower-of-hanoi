@@ -1340,7 +1340,7 @@ scene("codex", () => {
         ]);
         txt(rar.label, pillX, y, { size: 16, hex: PAL.ink, stroke: 0, z: Z.ui + 1, ...T });
         txt(known ? u.name : "???", 200, y - 12, { anchor: "left", align: "left", size: 18, hex: known ? rar.hex : PAL.chrome, stroke: 2, ...T });
-        txt(known ? (u.desc || "") : "Unseen protocol. Take it to reveal.", 200, y + 12, { anchor: "left", align: "left", size: 16, width: 660, hex: PAL.chrome, stroke: 2, ...T });
+        txt(known ? (u.desc || "") : "Upgrades appear here once offered.", 200, y + 12, { anchor: "left", align: "left", size: 16, width: 660, hex: PAL.chrome, stroke: 2, ...T });
       });
     } else if (tab === 2) {
       quests.slice(from, from + PER_PAGE).forEach((q, i) => {
